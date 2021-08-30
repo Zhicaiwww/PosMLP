@@ -44,6 +44,7 @@ def create_model(
         global_pool (str): global pool type (default: 'avg')
         **: other kwargs are model specific
     """
+
     source_name, model_name = split_model_name(model_name)
 
     # Only EfficientNet and MobileNetV3 models have support for batchnorm params or drop_connect_rate passed as args

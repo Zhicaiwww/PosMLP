@@ -76,7 +76,7 @@ recovery_interval: 0
 remode: pixel
 reprob: 0.0
 resplit: false
-resume: "/home/zhicai/Mgmlp/output/train/20210722-163358-M3gmlp_s16_224-224/last.pth.tar"
+resume: ""
 save_images: false
 scale:
 - 0.08

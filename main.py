@@ -19,7 +19,7 @@ import torch.nn as nn
 import torchvision.utils
 from torch.nn.parallel import DistributedDataParallel as NativeDDP
 
-from .models.builder import create_model
+from models import create_model
 from timm.data import create_dataset, create_loader, resolve_data_config, Mixup, FastCollateMixup, AugMixDataset
 from timm.models import load_checkpoint, resume_checkpoint, convert_splitbn_model
 from timm.utils import *
@@ -27,6 +27,8 @@ from timm.loss import LabelSmoothingCrossEntropy, SoftTargetCrossEntropy, JsdCro
 from timm.optim import create_optimizer
 from timm.scheduler import create_scheduler
 from timm.utils import ApexScaler, NativeScaler
+import warnings
+warnings.filterwarnings('ignore')
 
 torch.backends.cudnn.benchmark = True
 _logger = logging.getLogger('train')
@@ -75,7 +77,7 @@ def _parse_args():
 def main():
     setup_default_logging()
     args, args_text = _parse_args()
-
+    # print(args_text)
     args.prefetcher = not args.no_prefetcher
     args.distributed = False
     if 'WORLD_SIZE' in os.environ:
@@ -221,7 +223,9 @@ def main():
         else:
             if args.local_rank == 0:
                 _logger.info("Using native Torch DistributedDataParallel.")
-            model = NativeDDP(model, device_ids=[args.local_rank])  # can use device str in Torch >= 1.1
+            model = NativeDDP(model, device_ids=[args.local_rank],
+            find_unused_parameters=True
+            )  # can use device str in Torch >= 1.1
         # NOTE: EMA model does not need to be wrapped by DDP
 
     lr_scheduler, num_epochs = create_scheduler(args, optimizer)
@@ -373,7 +377,7 @@ def main():
                 lr_scheduler.step(epoch + 1, eval_metrics[eval_metric])
 
             update_summary(
-                epoch, train_metrics, eval_metrics, os.path.join(output_dir, 'summary.csv'),
+                epoch, train_metrics, eval_metrics,os.path.join(output_dir, 'summary.csv'),
                 write_header=best_metric is None)
 
             if saver is not None:

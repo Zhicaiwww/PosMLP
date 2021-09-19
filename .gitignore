@@ -116,6 +116,12 @@ venv.bak/
 .spyderproject
 .spyproject
 *.out
+*.sh
+config/
+.csv/
+figure/
+*.png
+*.jpg
 #
 .vscode/
 

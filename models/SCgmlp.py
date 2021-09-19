@@ -1,6 +1,7 @@
 
 import math
 from functools import partial
+from re import L
 import einops
 import torch
 from torch._C import ErrorReport, NoneType
@@ -11,8 +12,10 @@ from torch.nn.modules.linear import Identity
 from .layers import PatchEmbed,ConvolutionalEmbed
 from .helpers import build_model_with_cfg, named_apply
 from .registry import register_model
+from .splat import *
 from timm.data import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
 from timm.models.layers import DropPath, lecun_normal_, to_ntuple
+from timm.models.mlp_mixer import MixerBlock
 
 def _cfg(url='', **kwargs):
     return {
@@ -74,7 +77,7 @@ class SpatialGatingUnit(nn.Module):
 
 class SpaticialChannelGU(nn.Module):
     
-    def __init__(self, dim, seq_len,chunks=2,with_att = True, gamma= 16,norm_layer=nn.LayerNorm):
+    def __init__(self, dim, seq_len,chunks=2,with_att = True, gamma= 16,splat = True,norm_layer=nn.LayerNorm):
         super().__init__()
         self.chunks = 3
         self.seq_len=seq_len
@@ -82,11 +85,20 @@ class SpaticialChannelGU(nn.Module):
         self.gate_dim = dim // chunks
         self.pad_dim = dim % chunks # if cant divided by chunks, cut the residual term
         self.proj_s = nn.Linear(self.seq_len,self.seq_len)
+        self.splat= splat
+        if splat :
+            self.proj_c = SplAtConv1d(self.gate_dim,self.gate_dim,1,stride=1,groups=4,radix=1,reduction_factor=4)
+        else:
+            self.proj_c = nn.Sequential(*[
+                nn.Linear(self.gate_dim,self.gate_dim//gamma),
+                nn.Linear(self.gate_dim//gamma,self.gate_dim)
+            ])
         self.proj_c_s = nn.Linear(self.gate_dim,self.gate_dim//gamma)
-        self.proj_c_e = nn.Linear(self.gate_dim//gamma,self.gate_dim)    
+        self.proj_c_e = nn.Linear(self.gate_dim//gamma,self.gate_dim)
+
         self.norm_s = norm_layer(self.gate_dim)
         self.norm_c = norm_layer(self.seq_len)
-        self.act = nn.ReLU()
+        self.act = nn.GELU()
         self.sft = nn.Softmax(-1)
         if with_att:
             self.att = Tiny_Att(dim,self.gate_dim)
@@ -96,10 +108,6 @@ class SpaticialChannelGU(nn.Module):
         # special init for the projection gate, called as override by base model init
         nn.init.normal_(self.proj_s.weight, std=1e-6)
         nn.init.ones_(self.proj_s.bias)
-        nn.init.normal_(self.proj_c_s.weight, std=1e-6)
-        nn.init.ones_(self.proj_c_s.bias)
-        nn.init.normal_(self.proj_c_e.weight, std=1e-6)
-        nn.init.ones_(self.proj_c_e.bias)
     def forward(self, x):
         # B N C
         att = self.att(x) if self.with_att else 0
@@ -111,8 +119,13 @@ class SpaticialChannelGU(nn.Module):
         u = self.act(self.proj_s(u.transpose(-1, -2)))
         uv = u.transpose(-1, -2)*v
 
-        w = self.norm_c(w.transpose(-1,-2)).transpose(-1,-2)
-        w = self.act(self.proj_c_e(self.proj_c_s(w)))
+
+        if self.splat:
+            w = self.proj_c(self.norm_c(w.transpose(-1,-2)))
+            w = self.act(w.transpose(-1,-2))
+        else:
+            w = self.norm_c(w.transpose(-1,-2)).transpose(-1,-2)
+            w = self.act(self.proj_c_e(self.act(self.proj_c_s(w))))
         
         wv = w*v
         uwv=(uv+wv)/2
@@ -282,8 +295,8 @@ class Mlp(nn.Module):
 class SelfGatedMlp(nn.Module):
     """ MLP as used in gMLP
     """
-    def __init__(self, in_features,hidden_features=None,seq_len=196, out_features=None,with_att=True, act_layer=nn.GELU,
-                 gate_layer=SpatialGatingUnit, chunks=2,norm_layer=partial(nn.LayerNorm, eps=1e-6),drop=0.):
+    def __init__(self, in_features,hidden_features=None,seq_len=196, out_features=None,with_att=True, act_layer=nn.GELU, 
+        chunks=2,norm_layer=partial(nn.LayerNorm, eps=1e-6),drop=0.):
         super().__init__()
         self.chunks= chunks
         out_features = out_features or in_features
@@ -333,14 +346,14 @@ class GatedMlp(nn.Module):
     """ MLP as used in gMLP
     """
     def __init__(self, in_features,hidden_features=None, out_features=None,with_att=True, act_layer=nn.GELU,
-                 gate_layer=SpatialGatingUnit, chunks=2,norm_layer=partial(nn.LayerNorm, eps=1e-6),drop=0.):
+                 gate_layer=SpatialGatingUnit, gamma = 8,chunks=2,norm_layer=partial(nn.LayerNorm, eps=1e-6),drop=0.):
         super().__init__()
         out_features = out_features or in_features
         hidden_features = hidden_features or in_features
         self.fc1 = nn.Linear(in_features, hidden_features)
         self.act = act_layer()
         if gate_layer is not None:
-            self.gate = gate_layer(hidden_features,chunks=chunks,with_att=with_att,norm_layer=norm_layer)
+            self.gate = gate_layer(hidden_features,chunks=chunks,gamma=gamma,with_att=with_att,norm_layer=norm_layer)
             hidden_features = hidden_features // chunks  # FIXME base reduction on gate property?
         else:
             self.gate = nn.Identity()
@@ -381,7 +394,7 @@ class SpatialGatingBlock(nn.Module):
     Based on: `Pay Attention to MLPs` - https://arxiv.org/abs/2105.08050
     """
     def __init__(
-            self, dim, seq_len, mlp_ratio=6, chunks=2,  with_att=True,mlp_layer=GatedMlp,gate_unit=SpatialGatingUnit, 
+            self, dim, seq_len, mlp_ratio=6, chunks=2,  with_att=True,mlp_layer=GatedMlp,gamma=8,gate_unit=SpatialGatingUnit, 
             norm_layer=partial(nn.LayerNorm, eps=1e-6), act_layer=nn.GELU, drop=0., drop_path=0.):
         super().__init__()
 
@@ -396,7 +409,7 @@ class SpatialGatingBlock(nn.Module):
         self.norm = norm_layer(dim)
         gate_unit = partial(gate_unit, seq_len=seq_len)
         # tgu = partial(TimeGatingUnit, segments=segments)
-        self.mlp_channels = mlp_layer(dim, gate_dim[0], chunks=chunks, act_layer=act_layer,  with_att= with_att, gate_layer=gate_unit,norm_layer=norm_layer,drop=drop)
+        self.mlp_channels = mlp_layer(dim, gate_dim[0], chunks=chunks, act_layer=act_layer, gamma=gamma, with_att= with_att, gate_layer=gate_unit,norm_layer=norm_layer,drop=drop)
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
 
     def forward(self, x):
@@ -425,6 +438,8 @@ class MlpMixer(nn.Module):
             stem = PatchEmbed,
             stem_norm=partial(nn.BatchNorm2d, eps=1e-6),
             chunks = 2,
+            gamma=8,
+            num_mlp=None,
             with_att = False
     ):
         super().__init__()
@@ -436,11 +451,16 @@ class MlpMixer(nn.Module):
             embed_dim=embed_dim, norm_layer= stem_norm )
         self.seq_len = self.stem.num_patches
         # FIXME drop_path (stochastic depth scaling rule or all the same?)
-        self.blocks = nn.Sequential(*[
+        blocks_list=[]
+        if num_mlp is not None:
+            num_blocks-=num_mlp
+            blocks_list = [MixerBlock(embed_dim, self.seq_len , (0.5,6)) for _ in range(num_mlp)]
+        blocks_list.extend([
             block_layer(
-                embed_dim, self.seq_len , mlp_ratio, mlp_layer=mlp_layer, norm_layer=norm_layer,
+                embed_dim, self.seq_len , mlp_ratio, mlp_layer=mlp_layer, norm_layer=norm_layer,gamma=gamma,
                 act_layer=act_layer,chunks= chunks,with_att=with_att,gate_unit=gate_unit, drop=drop_rate, drop_path=drop_path_rate)
             for _ in range(num_blocks)])
+        self.blocks = nn.Sequential(*blocks_list)
         self.norm = norm_layer(embed_dim)
         self.head = nn.Linear(embed_dim, self.num_classes) if num_classes > 0 else nn.Identity()
 
@@ -546,16 +566,8 @@ def _create_mixer(variant, pretrained=False, **kwargs):
         **kwargs)
     return model
 
-@register_model
-def gmlp_ti16_224(pretrained=False, **kwargs):
-    """ gMLP-Tiny
-    Paper: `Pay Attention to MLPs` - https://arxiv.org/abs/2105.08050
-    """
-    model_args = dict(
-        patch_size=16, num_blocks=30, embed_dim=128, mlp_ratio=6, chunks=2,block_layer=SpatialGatingBlock, gate_unit=SpatialGatingUnit,
-        mlp_layer=GatedMlp, **kwargs)
-    model = _create_mixer('gmlp_ti16_224', pretrained=pretrained, **model_args)
-    return model
+
+
 
 @register_model
 def SCG3gmlp_ti16_224(pretrained=False, **kwargs):
@@ -607,7 +619,18 @@ def SCG3gmlp_convstem_s16_224_2(pretrained=False, **kwargs):
     Paper: `Pay Attention to MLPs` - https://arxiv.org/abs/2105.08050
     """
     model_args = dict(
-        patch_size=16, num_blocks=29, stem =ConvolutionalEmbed,stem_norm=partial(nn.BatchNorm2d, eps=1e-6), embed_dim=256,chunks=3, mlp_ratio=6, block_layer=SpatialGatingBlock, gate_unit=SpaticialChannelGU,
+        patch_size=16, num_blocks=29, stem =ConvolutionalEmbed,stem_norm=partial(nn.BatchNorm2d, eps=1e-6), embed_dim=256,chunks=3, mlp_ratio=6, gamma=4, block_layer=SpatialGatingBlock, gate_unit=SpaticialChannelGU,
+        mlp_layer=GatedMlp, **kwargs)
+    model = _create_mixer('gmlp_ti16_224', pretrained=pretrained, **model_args)
+    return model
+
+@register_model
+def SCG3gmlp_5mlp_25gmlp_s16_224_2(pretrained=False, **kwargs):
+    """ gMLP-Tiny
+    Paper: `Pay Attention to MLPs` - https://arxiv.org/abs/2105.08050
+    """
+    model_args = dict(
+        patch_size=16, num_blocks=30,num_mlp=5, embed_dim=256, stem_norm =partial(nn.LayerNorm, eps=1e-6), chunks=3, mlp_ratio=6, gamma=8, block_layer=SpatialGatingBlock, gate_unit=SpaticialChannelGU,
         mlp_layer=GatedMlp, **kwargs)
     model = _create_mixer('gmlp_ti16_224', pretrained=pretrained, **model_args)
     return model
@@ -644,6 +667,8 @@ def M3gmlp_s16_224(pretrained=False, **kwargs):
         mlp_layer=GatedMlp, **kwargs)
     model = _create_mixer('gmlp_s16_224', pretrained=pretrained,pretrained_strict=False, **model_args)
     return model
+
+
 @register_model
 def SelfGate3_s16_224(pretrained=False, **kwargs):
     """ gMLP-Small

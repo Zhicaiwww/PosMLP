@@ -1,9 +1,8 @@
 aa: rand-m6-n3-mstd1.0-inc1
 amp: true
 apex_amp: false
-native_amp: true
 aug_splits: 0
-batch_size: 80
+batch_size: 120
 bn_eps: null
 bn_momentum: null
 bn_tf: false
@@ -16,8 +15,8 @@ cooldown_epochs: 10
 crop_pct: 0.9
 cutmix: 1.0
 cutmix_minmax: null
-data: "/data2/FSLDataSets/ImageNet2012"
-dataset: ""
+data: /data/FSLDataSets/ImageNet2012
+dataset: ''
 decay_epochs: 1.0
 decay_rate: 0.988
 dist_bn: reduce
@@ -27,6 +26,7 @@ drop_connect: null
 drop_path: 0
 epoch_repeats: 0.0
 epochs: 120
+eval_checkpoint: ''
 eval_metric: top1
 experiment: ''
 gp: null
@@ -39,7 +39,7 @@ jsd: false
 local_rank: 0
 log_interval: 50
 log_wandb: false
-lr: 0.001
+lr: 0.0015
 lr_cycle_limit: 1
 lr_cycle_mul: 1.0
 lr_noise: null
@@ -57,10 +57,12 @@ model_ema: true
 model_ema_decay: 0.99992
 model_ema_force_cpu: false
 momentum: 0.9
+native_amp: true
 no_aug: false
 no_prefetcher: false
 no_resume_opt: false
 num_classes: 500
+num_gpu: 1
 opt: adamw
 opt_betas: null
 opt_eps: 1.0e-06
@@ -76,7 +78,7 @@ recovery_interval: 0
 remode: pixel
 reprob: 0.0
 resplit: false
-resume: ""
+resume: 
 save_images: false
 scale:
 - 0.08

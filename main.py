@@ -224,7 +224,7 @@ def main():
             if args.local_rank == 0:
                 _logger.info("Using native Torch DistributedDataParallel.")
             model = NativeDDP(model, device_ids=[args.local_rank],
-            find_unused_parameters=True
+            # find_unused_parameters=True
             )  # can use device str in Torch >= 1.1
         # NOTE: EMA model does not need to be wrapped by DDP
 

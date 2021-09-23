@@ -32,6 +32,9 @@ default_cfgs = {
     'nest_gmlp_b': _cfg(),
     'nest_gmlp_s': _cfg(),
     'nest_gmlp_t': _cfg(),
+    'nest_scgmlp_b': _cfg(),
+    'nest_scgmlp_s': _cfg(),
+    'nest_scgmlp_t': _cfg(),
 }
 
 
@@ -150,9 +153,29 @@ class SCGatingUnit(nn.Module):
 
 class SGatingUnit(nn.Module):
 
-    def __init__(self, dim, seq_len,chunks=2, norm_layer=nn.LayerNorm):
+    def __init__(self, dim, seq_len,chunks=2, norm_layer=nn.LayerNorm,pos_emb=False,block=1):
         super().__init__()
         self.chunks = chunks
+        self.seq =seq_len
+        self.pos=pos_emb
+        if self.pos:
+                    # define a parameter table of relative position bias
+            self.relative_position_bias_table = nn.Parameter(
+                torch.zeros((2 * seq_len - 1) * (2 * seq_len - 1), block))  # 2*Wh-1 * 2*Ww-1, nH
+
+            # get pair-wise relative position index for each token inside the window
+            coords_h = torch.arange(self.seq)
+            coords_w = torch.arange(self.seq)
+            coords = torch.stack(torch.meshgrid([coords_h, coords_w]))  # 2, Wh, Ww
+            coords_flatten = torch.flatten(coords, 1)  # 2, Wh*Ww
+            relative_coords = coords_flatten[:, :, None] - coords_flatten[:, None, :]  # 2, Wh*Ww, Wh*Ww
+            relative_coords = relative_coords.permute(1, 2, 0).contiguous()  # Wh*Ww, Wh*Ww, 2
+            relative_coords[:, :, 0] += self.seq - 1  # shift to start from 0
+            relative_coords[:, :, 1] += self.seq - 1
+            relative_coords[:, :, 0] *= 2 * self.seq - 1
+            self.relative_position_index = relative_coords.sum(-1)  # Wh*Ww, Wh*Ww
+            # self.register_buffer("relative_position_index", relative_position_index)
+        
         self.gate_dim = dim // chunks
         self.pad_dim = dim % chunks # if cant divided by chunks, cut the residual term
         self.proj_list = nn.Sequential(*[nn.Linear(seq_len, seq_len) for i in range(chunks-1)])
@@ -165,19 +188,22 @@ class SGatingUnit(nn.Module):
             nn.init.ones_(proj.bias)
 
     def forward(self, x):
-        # B N C
+        # B W N C
         if self.pad_dim:
             x = x[:,:,:-self.pad_dim]
         x_chunks = x.chunk(self.chunks, dim=-1)
         u = x_chunks[0]
+        if self.pos:
+            relative_position_bias = self.relative_position_bias_table[self.relative_position_index.view(-1)].view(
+                self.seq * self.seq, self.seq * self.seq, -1)  # Wh*Ww,Wh*Ww,block
+            relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous()  # block, Wh*Ww, Wh*Ww
         for i in range(self.chunks-1):
             v = x_chunks[i+1]
             u = self.norm_list[i](u)
-            u = self.proj_list[i](u.transpose(-1, -2))
-            if i == self.chunks -1:
-                u = u.transpose(-1, -2)
-            else:
-                u = u.transpose(-1, -2)
+            pos_bias = torch.einsum('wmn,bwnc->bwmc',relative_position_bias,u) if self.pos else 0 
+            
+            # bwmc
+            u = self.proj_list[i](u.transpose(-1, -2)).transpose(-1, -2) + pos_bias
             u = u * v
         return u
 
@@ -212,9 +238,12 @@ class GmlpLayer(nn.Module):
         
 class ConvPool(nn.Module):
 
-    def __init__(self, in_channels, out_channels, norm_layer, pad_type=''):
+    def __init__(self, in_channels, out_channels, norm_layer, pad_type='',depth_conv = True):
         super().__init__()
-        self.conv = create_conv2d(in_channels, out_channels, kernel_size=3, padding=pad_type, bias=True)
+        if depth_conv:
+            self.conv = create_conv2d(in_channels, out_channels, kernel_size=3, padding=pad_type,depthwise=True, bias=True)
+        else:
+            self.conv = create_conv2d(in_channels, out_channels, kernel_size=3, padding=pad_type, bias=True)
         self.norm = norm_layer(out_channels)
         self.pool = create_pool2d('max', kernel_size=3, stride=2, padding=pad_type)
 
@@ -264,7 +293,7 @@ class NestLevel(nn.Module):
     """ Single hierarchical level of a Nested Transformer
     """
     def __init__(
-            self, num_blocks, block_size, seq_length, depth, embed_dim, prev_embed_dim=None,
+            self, num_blocks, block_size,gate_unit, seq_length, depth, embed_dim, prev_embed_dim=None,
             mlp_ratio=4., drop_rate=0., drop_path_rates=[],
             norm_layer=None, act_layer=None, pad_type='',**kwargs):
         super().__init__()
@@ -280,7 +309,9 @@ class NestLevel(nn.Module):
         if len(drop_path_rates):
             assert len(drop_path_rates) == depth, 'Must provide as many drop path rates as there are transformer layers'
         self.encoder = nn.Sequential(*[
-            GmlpLayer(dim= embed_dim,seq_length=seq_length,mlp_ratio=mlp_ratio,drop = drop_rate,drop_path_rates=drop_path_rates[i],norm_layer=norm_layer,act_layer=act_layer,**kwargs)
+            GmlpLayer(dim= embed_dim,seq_length=seq_length,gate_unit=gate_unit,mlp_ratio=mlp_ratio,
+            drop = drop_rate,drop_path_rates=drop_path_rates[i],
+            norm_layer=norm_layer,act_layer=act_layer,**kwargs)
             # TransformerLayer(
             #     dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias,
             #     drop=drop_rate, attn_drop=attn_drop_rate, drop_path=drop_path_rates[i],
@@ -308,7 +339,7 @@ class Nest(nn.Module):
     """
 
     def __init__(self, img_size=224, in_chans=3, patch_size=4, num_levels=3, embed_dims=(128, 256, 512),
-                  depths=(2, 2, 20), num_classes=1000, mlp_ratio=4., 
+                  depths=(2, 2, 20), num_classes=1000, mlp_ratio=4., gate_unit=SGatingUnit,
                  drop_rate=0.,  drop_path_rate=0.5, norm_layer=partial(nn.LayerNorm, eps=1e-6), act_layer=nn.GELU,
                  pad_type='', weight_init='', global_pool='avg',**kwargs):
         """
@@ -329,6 +360,10 @@ class Nest(nn.Module):
             pad_type: str: Type of padding to use '' for PyTorch symmetric, 'same' for TF SAME
             weight_init: (str): weight init scheme
             global_pool: (str): type of pooling operation to apply to final feature map
+            
+            optional(SCguit):
+            gamma= 16, 
+            splat = True,
         Notes:
             - Default values follow NesT-B from the original Jax code.
             - `embed_dims`, `num_heads`, `depths` should be ints or tuples with length `num_levels`.
@@ -379,7 +414,7 @@ class Nest(nn.Module):
         for i in range(len(self.num_blocks)):
             dim = embed_dims[i]
             levels.append(NestLevel(
-                self.num_blocks[i], self.block_size, self.seq_length,depths[i], dim, prev_embed_dim=prev_dim,
+                self.num_blocks[i], self.block_size, gate_unit,self.seq_length,depths[i], dim, prev_embed_dim=prev_dim,
                 mlp_ratio=mlp_ratio,  drop_rate=drop_rate, drop_path_rates = dp_rates[i], norm_layer=norm_layer, act_layer=act_layer, pad_type=pad_type,**kwargs))
             self.feature_info += [dict(num_chs=dim, reduction=curr_stride, module=f'levels.{i}')]
             prev_dim = dim
@@ -519,3 +554,29 @@ def nest_gmlp_t(pretrained=False, **kwargs):
     model = _create_nest('nest_gmlp_t', pretrained=pretrained, **model_kwargs)
     return model
 
+@register_model
+def nest_scgmlp_b(pretrained=False, **kwargs):
+    """ Nest-B @ 224x224
+    """
+    model_kwargs = dict(
+        embed_dims=(128, 256, 512), depths=(2, 2, 20), gamma= 8,splat = False,gate_unit=SCGatingUnit, **kwargs)
+    model = _create_nest('nest_scgmlp_b', pretrained=pretrained, **model_kwargs)
+    return model
+
+
+@register_model
+def nest_scgmlp_s(pretrained=False, **kwargs):
+    """ Nest-S @ 224x224
+    """
+    model_kwargs = dict(embed_dims=(96, 192, 384),  depths=(2, 2, 20), gamma= 8,splat = False,gate_unit=SCGatingUnit, **kwargs)
+    model = _create_nest('nest_scgmlp_s', pretrained=pretrained, **model_kwargs)
+    return model
+
+
+@register_model
+def nest_scgmlp_t(pretrained=False, **kwargs):
+    """ Nest-T @ 224x224
+    """
+    model_kwargs = dict(embed_dims=(96, 192, 384), depths=(2, 2, 8), gamma= 8,splat = False,gate_unit=SCGatingUnit,**kwargs)
+    model = _create_nest('nest_scgmlp_t', pretrained=pretrained, **model_kwargs)
+    return model

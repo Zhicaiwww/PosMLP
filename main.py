@@ -20,7 +20,8 @@ import torchvision.utils
 from torch.nn.parallel import DistributedDataParallel as NativeDDP
 
 from models import create_model
-from timm.data import create_dataset, create_loader, resolve_data_config, Mixup, FastCollateMixup, AugMixDataset
+from datasets import create_dataset
+from timm.data import create_loader, resolve_data_config, Mixup, FastCollateMixup, AugMixDataset
 from timm.models import load_checkpoint, resume_checkpoint, convert_splitbn_model
 from timm.utils import *
 from timm.loss import LabelSmoothingCrossEntropy, SoftTargetCrossEntropy, JsdCrossEntropy
@@ -224,7 +225,7 @@ def main():
             if args.local_rank == 0:
                 _logger.info("Using native Torch DistributedDataParallel.")
             model = NativeDDP(model, device_ids=[args.local_rank],
-            # find_unused_parameters=True
+            find_unused_parameters=True
             )  # can use device str in Torch >= 1.1
         # NOTE: EMA model does not need to be wrapped by DDP
 
@@ -242,9 +243,9 @@ def main():
         _logger.info('Scheduled epochs: {}'.format(num_epochs))
 
     dataset_train = create_dataset(
-            args.dataset, root=args.data, split=args.train_split, is_training=True, batch_size=args.batch_size)
+            args.dataset, root=args.data, split=args.train_split, is_training=True, batch_size=args.batch_size,class_ratio=args.class_ratio,sample_ratio=args.sample_ratio)
     dataset_eval = create_dataset(
-        args.dataset, root=args.data, split=args.val_split, is_training=False, batch_size=args.batch_size)
+        args.dataset, root=args.data, split=args.val_split, is_training=False, batch_size=args.batch_size,class_ratio=args.class_ratio,sample_ratio=args.sample_ratio)
 
     collate_fn = None
     mixup_fn = None
@@ -370,7 +371,7 @@ def main():
                     distribute_bn(model_ema, args.world_size, args.dist_bn == 'reduce')
                 ema_eval_metrics = validate(
                     model_ema.ema, loader_eval, validate_loss_fn, args, amp_autocast=amp_autocast, log_suffix=' (EMA)')
-                eval_metrics = ema_eval_metrics
+                # eval_metrics = ema_eval_metrics
 
             if lr_scheduler is not None:
                 # step LR for next epoch

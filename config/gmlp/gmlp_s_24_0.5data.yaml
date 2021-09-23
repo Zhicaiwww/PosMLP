@@ -3,7 +3,7 @@ amp: true
 apex_amp: false
 native_amp: true
 aug_splits: 0
-batch_size: 128
+batch_size: 80
 bn_eps: null
 bn_momentum: null
 bn_tf: false

@@ -111,7 +111,8 @@ venv/
 ENV/
 env.bak/
 venv.bak/
-
+*.pth
+summary.csv
 # Spyder project settings
 .spyderproject
 .spyproject

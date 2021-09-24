@@ -121,7 +121,8 @@ def main():
         bn_momentum=args.bn_momentum,
         bn_eps=args.bn_eps,
         checkpoint_path=args.initial_checkpoint,
-        img_size=args.img_size)
+        img_size=args.img_size,
+        **args.model_hyper)
 
     if args.local_rank == 0:
         _logger.info('Model %s created, param count: %d' %
@@ -378,7 +379,7 @@ def main():
                 lr_scheduler.step(epoch + 1, eval_metrics[eval_metric])
 
             update_summary(
-                epoch, train_metrics, eval_metrics,os.path.join(output_dir, 'summary.csv'),
+                epoch, train_metrics, eval_metrics,ema_eval_metrics,os.path.join(output_dir, 'summary.csv'),
                 write_header=best_metric is None)
 
             if saver is not None:

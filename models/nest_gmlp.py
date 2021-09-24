@@ -97,7 +97,7 @@ class TransformerLayer(nn.Module):
 
 class SCGatingUnit(nn.Module):
     
-    def __init__(self, dim, seq_len,chunks=2,norm_layer=nn.LayerNorm,gamma= 16,splat = True,):
+    def __init__(self, dim, seq_len,chunks=2,norm_layer=nn.LayerNorm,gamma= 16,splat = True,**kwargs):
         super().__init__()
         self.chunks = 3
         self.seq_len=seq_len
@@ -150,32 +150,33 @@ class SCGatingUnit(nn.Module):
 
         # uwv=self.se(w)*uv
         return uwv
-
 class SGatingUnit(nn.Module):
-
-    def __init__(self, dim, seq_len,chunks=2, norm_layer=nn.LayerNorm,pos_emb=False,block=1):
+    
+    def __init__(self, dim, seq_len,chunks=2, norm_layer=nn.LayerNorm,pos_emb=False,num_blocks=1,**kwargs):
         super().__init__()
         self.chunks = chunks
-        self.seq =seq_len
+        self.wh =int(math.pow(seq_len,0.5))
         self.pos=pos_emb
         if self.pos:
                     # define a parameter table of relative position bias
             self.relative_position_bias_table = nn.Parameter(
-                torch.zeros((2 * seq_len - 1) * (2 * seq_len - 1), block))  # 2*Wh-1 * 2*Ww-1, nH
+                torch.zeros((2 * self.wh - 1) * (2 * self.wh - 1), num_blocks))  # 2*Wh-1 * 2*Ww-1, nH
 
             # get pair-wise relative position index for each token inside the window
-            coords_h = torch.arange(self.seq)
-            coords_w = torch.arange(self.seq)
+            coords_h = torch.arange(self.wh)
+            coords_w = torch.arange(self.wh)
             coords = torch.stack(torch.meshgrid([coords_h, coords_w]))  # 2, Wh, Ww
             coords_flatten = torch.flatten(coords, 1)  # 2, Wh*Ww
-            relative_coords = coords_flatten[:, :, None] - coords_flatten[:, None, :]  # 2, Wh*Ww, Wh*Ww
+            relative_coords = coords_flatten.unsqueeze(2) - coords_flatten.unsqueeze(1)  # 2, Wh*Ww, Wh*Ww
             relative_coords = relative_coords.permute(1, 2, 0).contiguous()  # Wh*Ww, Wh*Ww, 2
-            relative_coords[:, :, 0] += self.seq - 1  # shift to start from 0
-            relative_coords[:, :, 1] += self.seq - 1
-            relative_coords[:, :, 0] *= 2 * self.seq - 1
-            self.relative_position_index = relative_coords.sum(-1)  # Wh*Ww, Wh*Ww
-            # self.register_buffer("relative_position_index", relative_position_index)
-        
+            relative_coords[:, :, 0] += self.wh - 1  # shift to start from 0
+            relative_coords[:, :, 1] += self.wh - 1
+            relative_coords[:, :, 0] *= 2 * self.wh - 1
+
+            relative_position_index = relative_coords.sum(-1)  # Wh*Ww, Wh*Ww
+            self.register_buffer("relative_position_index", relative_position_index)
+            trunc_normal_(self.relative_position_bias_table, std=.02)
+
         self.gate_dim = dim // chunks
         self.pad_dim = dim % chunks # if cant divided by chunks, cut the residual term
         self.proj_list = nn.Sequential(*[nn.Linear(seq_len, seq_len) for i in range(chunks-1)])
@@ -195,7 +196,7 @@ class SGatingUnit(nn.Module):
         u = x_chunks[0]
         if self.pos:
             relative_position_bias = self.relative_position_bias_table[self.relative_position_index.view(-1)].view(
-                self.seq * self.seq, self.seq * self.seq, -1)  # Wh*Ww,Wh*Ww,block
+                self.wh * self.wh, self.wh * self.wh, -1)  # Wh*Ww,Wh*Ww,block
             relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous()  # block, Wh*Ww, Wh*Ww
         for i in range(self.chunks-1):
             v = x_chunks[i+1]
@@ -238,9 +239,10 @@ class GmlpLayer(nn.Module):
         
 class ConvPool(nn.Module):
 
-    def __init__(self, in_channels, out_channels, norm_layer, pad_type='',depth_conv = True):
+    def __init__(self, in_channels, out_channels, norm_layer, pad_type='',depth_conv = True,**kwargs):
         super().__init__()
         if depth_conv:
+            print("using depth_con instead!")
             self.conv = create_conv2d(in_channels, out_channels, kernel_size=3, padding=pad_type,depthwise=True, bias=True)
         else:
             self.conv = create_conv2d(in_channels, out_channels, kernel_size=3, padding=pad_type, bias=True)
@@ -301,7 +303,7 @@ class NestLevel(nn.Module):
         self.pos_embed = nn.Parameter(torch.zeros(1, num_blocks, seq_length, embed_dim))
 
         if prev_embed_dim is not None:
-            self.pool = ConvPool(prev_embed_dim, embed_dim, norm_layer=norm_layer, pad_type=pad_type)
+            self.pool = ConvPool(prev_embed_dim, embed_dim, norm_layer=norm_layer, pad_type=pad_type,**kwargs)
         else:
             self.pool = nn.Identity()
 

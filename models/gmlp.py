@@ -8,7 +8,7 @@ import torch.nn as nn
 import math
 from torch.nn.modules.linear import Identity
 
-from .layers import *
+from .patch_emb import *
 from .helpers import build_model_with_cfg, named_apply
 from .registry import register_model
 from timm.data import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD

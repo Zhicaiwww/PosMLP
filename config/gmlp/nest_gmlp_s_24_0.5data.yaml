@@ -56,8 +56,9 @@ mixup_switch_prob: 0.5
 model: nest_gmlp_s
 model_hyper:
   gamma : 8
-  depth_conv : true
+  depth_conv : false
   pos_emb : true
+  stem_name : 'Nest_ConvolutionalEmbed'  # Nest_ConvolutionalEmbed or PatchEmbed
 model_ema: true
 model_ema_decay: 0.99992
 model_ema_force_cpu: false

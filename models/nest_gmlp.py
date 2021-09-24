@@ -2,6 +2,7 @@ import collections.abc
 import logging
 import math
 from functools import partial
+from timm.models import layers
 
 import torch
 import torch.nn.functional as F
@@ -10,7 +11,7 @@ from torch import nn
 from timm.models.layers import DropPath,create_conv2d, create_pool2d, to_ntuple,trunc_normal_,create_classifier
 from timm.data import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
 from .helpers import build_model_with_cfg, named_apply
-from .layers import PatchEmbed,ConvolutionalEmbed
+from . import patch_emb as peb
 from .registry import register_model
 
 _logger = logging.getLogger(__name__)
@@ -38,62 +39,6 @@ default_cfgs = {
 }
 
 
-class Attention(nn.Module):
-    """
-    This is much like `.vision_transformer.Attention` but uses *localised* self attention by accepting an input with
-     an extra "image block" dim
-    """
-    def __init__(self, dim, num_heads=8, qkv_bias=False, attn_drop=0., proj_drop=0.):
-        super().__init__()
-        self.num_heads = num_heads
-        head_dim = dim // num_heads
-        self.scale = head_dim ** -0.5
-
-        self.qkv = nn.Linear(dim, 3*dim, bias=qkv_bias)
-        self.attn_drop = nn.Dropout(attn_drop)
-        self.proj = nn.Linear(dim, dim)
-        self.proj_drop = nn.Dropout(proj_drop)
-
-    def forward(self, x):
-        """
-        x is shape: B (batch_size), T (image blocks), N (seq length per image block), C (embed dim)
-        """ 
-        B, T, N, C = x.shape
-        # result of next line is (qkv, B, num (H)eads, T, N, (C')hannels per head)
-        qkv = self.qkv(x).reshape(B, T, N, 3, self.num_heads, C // self.num_heads).permute(3, 0, 4, 1, 2, 5)
-        q, k, v = qkv[0], qkv[1], qkv[2]   # make torchscript happy (cannot use tensor as tuple)
-
-        attn = (q @ k.transpose(-2, -1)) * self.scale # (B, H, T, N, N)
-        attn = attn.softmax(dim=-1)
-        attn = self.attn_drop(attn)
-
-        # (B, H, T, N, C'), permute -> (B, T, N, C', H)
-        x = (attn @ v).permute(0, 2, 3, 4, 1).reshape(B, T, N, C)
-        x = self.proj(x)
-        x = self.proj_drop(x)
-        return x  # (B, T, N, C)
-
-class TransformerLayer(nn.Module):
-    """
-    This is much like `.vision_transformer.Block` but:
-        - Called TransformerLayer here to allow for "block" as defined in the paper ("non-overlapping image blocks")
-        - Uses modified Attention layer that handles the "block" dimension
-    """
-    def __init__(self, dim, num_heads, mlp_ratio=4., qkv_bias=False, drop=0., attn_drop=0., drop_path=0.,
-                 act_layer=nn.GELU, norm_layer=nn.LayerNorm):
-        super().__init__()
-        self.norm1 = norm_layer(dim)
-        self.attn = Attention(dim, num_heads=num_heads, qkv_bias=qkv_bias, attn_drop=attn_drop, proj_drop=drop)
-        self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
-        self.norm2 = norm_layer(dim)
-        mlp_hidden_dim = int(dim * mlp_ratio)
-        self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
-
-    def forward(self, x):
-        y = self.norm1(x)
-        x = x + self.drop_path(self.attn(y))
-        x = x + self.drop_path(self.mlp(self.norm2(x)))
-        return x
 
 class SCGatingUnit(nn.Module):
     
@@ -290,7 +235,6 @@ def deblockify(x, block_size: int):
     return x  # (B, H, W, C)
 
 
-
 class NestLevel(nn.Module):
     """ Single hierarchical level of a Nested Transformer
     """
@@ -343,7 +287,7 @@ class Nest(nn.Module):
     def __init__(self, img_size=224, in_chans=3, patch_size=4, num_levels=3, embed_dims=(128, 256, 512),
                   depths=(2, 2, 20), num_classes=1000, mlp_ratio=4., gate_unit=SGatingUnit,
                  drop_rate=0.,  drop_path_rate=0.5, norm_layer=partial(nn.LayerNorm, eps=1e-6), act_layer=nn.GELU,
-                 pad_type='', weight_init='', global_pool='avg',**kwargs):
+                 pad_type='', weight_init='', global_pool='avg',stem_name = "Nest_ConvolutionalEmbed",**kwargs):
         """
         Args:
             img_size (int, tuple): input image size
@@ -403,8 +347,10 @@ class Nest(nn.Module):
         self.block_size = int((img_size // patch_size) // math.sqrt(self.num_blocks[0]))
         
         # Patch embedding
-        self.patch_embed = PatchEmbed(
-            img_size=img_size, patch_size=patch_size, in_chans=in_chans, embed_dim=embed_dims[0], flatten=False)
+        
+        stem = getattr(peb,stem_name)
+        self.patch_embed = stem(
+            img_size=img_size, patch_size=patch_size, in_chans=in_chans, embed_dim=embed_dims[0], flatten=False,**kwargs)
         self.num_patches = self.patch_embed.num_patches
         self.seq_length = self.num_patches // self.num_blocks[0]
 
@@ -543,7 +489,7 @@ def nest_gmlp_b(pretrained=False, **kwargs):
 def nest_gmlp_s(pretrained=False, **kwargs):
     """ Nest-S @ 224x224
     """
-    model_kwargs = dict(embed_dims=(96, 192, 384),  depths=(2, 2, 20),chunks=2, **kwargs)
+    model_kwargs = dict(embed_dims=(96, 192, 384),  depths=(2, 2, 20),chunks=2,**kwargs)
     model = _create_nest('nest_gmlp_s', pretrained=pretrained, **model_kwargs)
     return model
 

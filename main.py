@@ -28,6 +28,7 @@ from timm.loss import LabelSmoothingCrossEntropy, SoftTargetCrossEntropy, JsdCro
 from timm.optim import create_optimizer
 from timm.scheduler import create_scheduler
 from timm.utils import ApexScaler, NativeScaler
+from utils import write_summary
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -378,7 +379,7 @@ def main():
                 # step LR for next epoch
                 lr_scheduler.step(epoch + 1, eval_metrics[eval_metric])
 
-            update_summary(
+            write_summary(
                 epoch, train_metrics, eval_metrics,ema_eval_metrics,os.path.join(output_dir, 'summary.csv'),
                 write_header=best_metric is None)
 

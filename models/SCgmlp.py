@@ -9,7 +9,7 @@ import torch.nn as nn
 import math
 from torch.nn.modules.linear import Identity
 
-from .layers import PatchEmbed,ConvolutionalEmbed
+from .patch_emb import PatchEmbed,ConvolutionalEmbed
 from .helpers import build_model_with_cfg, named_apply
 from .registry import register_model
 from .splat import *

@@ -122,6 +122,7 @@ summary.csv
 figure/
 *.png
 *.jpg
+*.tar
 #
 .vscode/
 

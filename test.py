@@ -14,8 +14,13 @@ args = parser.parse_args()
 models.list_models()
 warnings.filterwarnings('ignore')
 # input=torch.randn([1,3,224,224])
+kwargs={'depth_conv': True,
+  'gamma': 8,
+  'pos_emb': False,
+  'stem_name' : 'PatchEmbed',
+  'blockwise': True}
+model = models.nest_gmlp_s(**kwargs)
 
-model = models.nest_gmlp_s()
 
 if args.type == 'ptflops':
     from ptflops import get_model_complexity_info

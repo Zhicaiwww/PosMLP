@@ -10,6 +10,7 @@ from torch import nn
 
 from timm.models.layers import DropPath,create_conv2d, create_pool2d, to_ntuple,trunc_normal_,create_classifier
 from timm.data import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
+from torch.nn.parameter import Parameter
 from .helpers import build_model_with_cfg, named_apply
 from . import patch_emb as peb
 from .registry import register_model
@@ -97,71 +98,115 @@ class SCGatingUnit(nn.Module):
         return uwv
 class SGatingUnit(nn.Module):
     
-    def __init__(self, dim, seq_len,chunks=2, norm_layer=nn.LayerNorm,pos_emb=False,num_blocks=1,**kwargs):
+    def __init__(self, dim, seq_len,chunks=2, norm_layer=nn.LayerNorm,pos_emb=True,num_blocks=1,quadratic=False,blockwise=False,**kwargs):
         super().__init__()
-        self.chunks = chunks
+        self.chunks = 2
         self.wh =int(math.pow(seq_len,0.5))
         self.pos=pos_emb
+        self.blocks=num_blocks if blockwise else 1
+        if blockwise: 
+            print("using blockwise method..")
+        self.seq_len=seq_len
+        self.quadratic = quadratic
         if self.pos:
-                    # define a parameter table of relative position bias
-            self.relative_position_bias_table = nn.Parameter(
-                torch.zeros((2 * self.wh - 1) * (2 * self.wh - 1), num_blocks))  # 2*Wh-1 * 2*Ww-1, nH
-
-            # get pair-wise relative position index for each token inside the window
-            coords_h = torch.arange(self.wh)
-            coords_w = torch.arange(self.wh)
-            coords = torch.stack(torch.meshgrid([coords_h, coords_w]))  # 2, Wh, Ww
-            coords_flatten = torch.flatten(coords, 1)  # 2, Wh*Ww
-            relative_coords = coords_flatten.unsqueeze(2) - coords_flatten.unsqueeze(1)  # 2, Wh*Ww, Wh*Ww
-            relative_coords = relative_coords.permute(1, 2, 0).contiguous()  # Wh*Ww, Wh*Ww, 2
-            relative_coords[:, :, 0] += self.wh - 1  # shift to start from 0
-            relative_coords[:, :, 1] += self.wh - 1
-            relative_coords[:, :, 0] *= 2 * self.wh - 1
-
-            relative_position_index = relative_coords.sum(-1)  # Wh*Ww, Wh*Ww
-            self.register_buffer("relative_position_index", relative_position_index)
-            trunc_normal_(self.relative_position_bias_table, std=.02)
+            if self.quadratic:
+                self.local_init(self.blocks)
+                self.get_rel_indices(self.seq_len)
+            else:
+                self.rel_locl_init(self.blocks)
 
         self.gate_dim = dim // chunks
         self.pad_dim = dim % chunks # if cant divided by chunks, cut the residual term
-        self.proj_list = nn.Sequential(*[nn.Linear(seq_len, seq_len) for i in range(chunks-1)])
-        self.norm_list = nn.Sequential(*[norm_layer(self.gate_dim)for i in range(chunks-1)])
+        # self.proj_list = nn.Sequential(*[nn.Linear(seq_len, seq_len) for i in range(chunks-1)])
+        self.norm= norm_layer(self.gate_dim)
+        
+        self.block_proj_n_weight = nn.Parameter(torch.zeros(self.blocks, seq_len, seq_len))
+        self.block_proj_n_bias = nn.Parameter(torch.ones(self.blocks, seq_len,1))
+        trunc_normal_(self.block_proj_n_weight,std=1e-6)
 
-    def init_weights(self):
-        # special init for the projection gate, called as override by base model init
-        for proj in self.proj_list:
-            nn.init.normal_(proj.weight, std=1e-6)
-            nn.init.ones_(proj.bias)
+    # def init_weights(self):
+    #     # special init for the projection gate, called as override by base model init
+    #     for proj in self.proj_list:
+    #         nn.init.normal_(proj.weight, std=1e-6)
+    #         nn.init.ones_(proj.bias)
+
+    def rel_locl_init(self,num_blocks):
+                                # define a parameter table of relative position bias
+        self.relative_position_bias_table = nn.Parameter(
+            torch.zeros((2 * self.wh - 1) * (2 * self.wh - 1), num_blocks))  # 2*Wh-1 * 2*Ww-1, nH
+
+        # get pair-wise relative position index for each token inside the window
+        coords_h = torch.arange(self.wh)
+        coords_w = torch.arange(self.wh)
+        coords = torch.stack(torch.meshgrid([coords_h, coords_w]))  # 2, Wh, Ww
+        coords_flatten = torch.flatten(coords, 1)  # 2, Wh*Ww
+        relative_coords = coords_flatten.unsqueeze(2) - coords_flatten.unsqueeze(1)  # 2, Wh*Ww, Wh*Ww
+        relative_coords = relative_coords.permute(1, 2, 0).contiguous()  # Wh*Ww, Wh*Ww, 2
+        relative_coords[:, :, 0] += self.wh - 1  # shift to start from 0
+        relative_coords[:, :, 1] += self.wh - 1
+        relative_coords[:, :, 0] *= 2 * self.wh - 1
+
+        relative_position_index = relative_coords.sum(-1)  # Wh*Ww, Wh*Ww
+        self.register_buffer("relative_position_index", relative_position_index)
+        trunc_normal_(self.relative_position_bias_table, std=.02)
+
+    def local_init(self,blocks):
+        
+
+        # self.attention_centers = nn.Parameter(
+        #     torch.zeros(1, 2).normal_(0.0, 1e-4)
+        # )
+        self.pos_proj = nn.Parameter(torch.randn([3,blocks]))
+        # self.pos_proj = torch.cat([-torch.ones([1,1]),self.attention_centers],dim=1)
+        # self.spread = 1+ nn.Parameter(torch.zeros(1).normal_(0.0, 1e-4))
+
+    def get_rel_indices(self, num_patches):
+        img_size = int(num_patches**.5)
+        rel_indices   = torch.zeros(num_patches, num_patches, 3)
+        ind = torch.arange(img_size).view(1,-1) - torch.arange(img_size).view(-1, 1)
+        indx = ind.repeat(img_size,img_size)
+        indy = ind.repeat_interleave(img_size,dim=0).repeat_interleave(img_size,dim=1)
+        indd = indx**2 + indy**2
+        rel_indices[:,:,2] = indd.unsqueeze(0)
+        rel_indices[:,:,1] = indy.unsqueeze(0)
+        rel_indices[:,:,0] = indx.unsqueeze(0)
+        self.register_buffer("rel_indices", rel_indices)
 
     def forward(self, x):
         # B W N C
-        if self.pad_dim:
-            x = x[:,:,:-self.pad_dim]
-        x_chunks = x.chunk(self.chunks, dim=-1)
+        B,W,N,C = x.size()
+        x_chunks = x.chunk(2, dim=-1)
         u = x_chunks[0]
         if self.pos:
-            relative_position_bias = self.relative_position_bias_table[self.relative_position_index.view(-1)].view(
-                self.wh * self.wh, self.wh * self.wh, -1)  # Wh*Ww,Wh*Ww,block
-            relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous()  # block, Wh*Ww, Wh*Ww
-        for i in range(self.chunks-1):
-            v = x_chunks[i+1]
-            u = self.norm_list[i](u)
-            pos_bias = torch.einsum('wmn,bwnc->bwmc',relative_position_bias,u) if self.pos else 0 
-            
-            # bwmc
-            u = self.proj_list[i](u.transpose(-1, -2)).transpose(-1, -2) + pos_bias
-            u = u * v
+            if self.quadratic:
+
+                # W,N,N
+                pos_score = torch.einsum('mnc,cw->wmn',self.rel_indices,self.pos_proj)
+                relative_position_bias = pos_score
+            else:
+                relative_position_bias = self.relative_position_bias_table[self.relative_position_index.view(-1)].view(
+                    self.wh * self.wh, self.wh * self.wh, -1)  # Wh*Ww,Wh*Ww,block
+                relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous()  # block, Wh*Ww, Wh*Ww
+
+        v = x_chunks[1]
+        u = self.norm(u)
+        pos_bias = torch.einsum('wmn,bwnc->bwmc',relative_position_bias,u) if self.pos else 0 
+        
+        # bwmc
+        u = torch.einsum('wmn,bwnc->bwmc',self.block_proj_n_weight,u) + self.block_proj_n_bias.unsqueeze(0) + pos_bias
+        u = u * v
         return u
 
 class GmlpLayer(nn.Module):
-    def __init__(self, dim, seq_length,gate_unit=SGatingUnit, chunks = 2, mlp_ratio=4., drop=0., drop_path_rates=0., act_layer=nn.GELU, norm_layer=nn.LayerNorm,**kwargs):
+    def __init__(self, dim, seq_length,gate_unit=SGatingUnit, num_blocks=1,
+    chunks = 2, mlp_ratio=4., drop=0., drop_path_rates=0., act_layer=nn.GELU, norm_layer=nn.LayerNorm,**kwargs):
         super().__init__()  
         chunks = chunks if gate_unit is SGatingUnit else 3 # 因为我们限制了SCG的splits数为3
         self.dim =dim
         self.norm = norm_layer(dim)
         self.hidden_dim = int(mlp_ratio * dim)
         self.proj_c_e = nn.Linear(self.dim,self.hidden_dim)
-        self.gate_unit = gate_unit(dim=self.hidden_dim, seq_len = seq_length, chunks=chunks, norm_layer=norm_layer,**kwargs)
+        self.gate_unit = gate_unit(dim=self.hidden_dim, seq_len = seq_length, num_blocks=num_blocks,chunks=chunks, norm_layer=norm_layer,**kwargs)
 
         self.hidden_dim = self.hidden_dim // chunks
 
@@ -255,7 +300,7 @@ class NestLevel(nn.Module):
         if len(drop_path_rates):
             assert len(drop_path_rates) == depth, 'Must provide as many drop path rates as there are transformer layers'
         self.encoder = nn.Sequential(*[
-            GmlpLayer(dim= embed_dim,seq_length=seq_length,gate_unit=gate_unit,mlp_ratio=mlp_ratio,
+            GmlpLayer(dim= embed_dim,num_blocks=num_blocks,seq_length=seq_length,gate_unit=gate_unit,mlp_ratio=mlp_ratio,
             drop = drop_rate,drop_path_rates=drop_path_rates[i],
             norm_layer=norm_layer,act_layer=act_layer,**kwargs)
             # TransformerLayer(

@@ -113,14 +113,17 @@ def show_para(path):
 def show_pos(path):
     ckpt = torch.load(path)
     for i,v in ckpt['state_dict_ema'].items():
-        if 'relative_position' in i :
+        if 'block_proj_n_weight' in i :
             print(i,v)
             break
-path = '/home/zhicai/Mgmlp/checkpoint-215.pth.tar'
+
+path = '/data/zhicai/ckpts/Mgmlp/train/20210928-084821-gmlp_s16_224-224/checkpoint-15.pth.tar'
 # show_weight(path,is_all = True, save_path='gmlp_s')
 # summary_list=['/data/zhicai/ckpts/Mgmlp/train/20210924-223448-nest_gmlp_s-224/summary.csv',
 # '/home/zhicai/Mglp/output/train/20210923-105647-nest_scgmlp_s-224/summary.csv']
 # name_list = ['nest_gmlp_s_conv_pos',
 # 'nest_gmlp_s_pos']
 # draw_acc(summary_list,name_list)
-show_weight(path, save_path='gmlp_s_pos_all(wight_and_posBias)')
+
+# show_weight(path, save_path='gmlp_s_pos_all(wight_and_posBias)')
+show_para(path)

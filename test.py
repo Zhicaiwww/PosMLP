@@ -16,9 +16,11 @@ warnings.filterwarnings('ignore')
 # input=torch.randn([1,3,224,224])
 kwargs={'depth_conv': True,
   'gamma': 8,
-  'pos_emb': False,
+  'pos_emb': True,
   'stem_name' : 'PatchEmbed',
-  'blockwise': True}
+  'blockwise': False,
+  'blocksplit': True
+  }
 model = models.nest_gmlp_s(**kwargs)
 
 

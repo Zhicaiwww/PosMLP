@@ -110,7 +110,6 @@ class Nest_ConvolutionalEmbed(nn.Module):
 
             if i == len(self.kernels)-1:
                 x = x.transpose(2, 3)  # BCHW -> BNC
-                print(x.size())
                 break
             x = self.act(x)
         return x

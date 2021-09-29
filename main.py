@@ -122,8 +122,8 @@ def main():
         bn_momentum=args.bn_momentum,
         bn_eps=args.bn_eps,
         checkpoint_path=args.initial_checkpoint,
-        img_size=args.img_size,)
-        # **args.model_hyper)
+        img_size=args.img_size,
+        **args.model_hyper)
 
     if args.local_rank == 0:
         _logger.info('Model %s created, param count: %d' %

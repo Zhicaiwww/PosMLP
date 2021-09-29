@@ -125,7 +125,7 @@ figure/
 *.tar
 #
 .vscode/
-
+Untitled.ipynb
 # sublime project settings
 *.sublime-workspace
 *.sublime-project

@@ -117,7 +117,7 @@ def show_pos(path):
             print(i,v)
             break
 
-path = '/data/zhicai/ckpts/Mgmlp/train/20210928-084821-gmlp_s16_224-224/checkpoint-15.pth.tar'
+path = '/data/zhicai/ckpts/Mgmlp/train/20210929-130722-nest_gmlp_s-224/checkpoint-3.pth.tar'
 # show_weight(path,is_all = True, save_path='gmlp_s')
 # summary_list=['/data/zhicai/ckpts/Mgmlp/train/20210924-223448-nest_gmlp_s-224/summary.csv',
 # '/home/zhicai/Mglp/output/train/20210923-105647-nest_scgmlp_s-224/summary.csv']

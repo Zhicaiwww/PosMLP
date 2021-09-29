@@ -245,15 +245,12 @@ class GmlpLayer(nn.Module):
         self.drop_path = DropPath(drop_path_rates) if drop_path_rates > 0. else nn.Identity()
         self.act = act_layer()
 
-    def forward_unit(self,x):
-        x = self.gate_unit(x)
-        return x
 
     def forward(self,x):
         # Input : x (1,b,n,c)
         residual = x
         x = self.act(self.proj_c_e(self.norm(x)))
-        x = self.forward_unit(x)
+        x = self.gate_unit(x)
         x = self.drop(self.proj_c_s(x))
         return self.drop_path(x) + residual
         

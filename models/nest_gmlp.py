@@ -37,6 +37,7 @@ default_cfgs = {
     'nest_scgmlp_b': _cfg(),
     'nest_scgmlp_s': _cfg(),
     'nest_scgmlp_t': _cfg(),
+    'nest_gmlp_s4':_cfg()
 }
 
 
@@ -110,9 +111,20 @@ class SGatingUnit(nn.Module):
         self.quadratic = quadratic
         if self.pos:
             if self.quadratic:
-                self.get_quadratic_rel_indices(self.seq_len,self.win_blocks)
+                self.att_std = 1e-2
+                self.get_quadratic_rel_indices(self.seq_len,self.blocks)
             else:
                 self.rel_locl_init(self.wh,self.win_blocks,register_name='window')
+                
+                if self.blocksplit:
+                    self.rel_locl_init(int(math.pow(self.blocks,0.5)),1,register_name='block')
+                    self.block_lamb=nn.Parameter(torch.Tensor([2]))
+                    self.split_lamb=nn.Parameter(torch.Tensor([1]))
+                    self.pool = nn.AvgPool2d
+                    self.block_proj_n_weight = nn.Parameter(torch.zeros(1, self.blocks, self.blocks))
+                    self.block_proj_n_bias = nn.Parameter(torch.zeros(1, self.blocks,1))
+                    trunc_normal_(self.block_proj_n_weight,std=1e-6)
+                self.init_bias_table()
 
         self.gate_dim = dim // chunks
         self.pad_dim = dim % chunks # if cant divided by chunks, cut the residual term
@@ -124,16 +136,6 @@ class SGatingUnit(nn.Module):
         self.token_proj_n_bias = nn.Parameter(torch.zeros(self.win_blocks, seq_len,1))
         trunc_normal_(self.token_proj_n_weight,std=1e-6)
 
-        if self.blocksplit:
-            self.rel_locl_init(int(math.pow(self.blocks,0.5)),1,register_name='block')
-            self.block_lamb=nn.Parameter(torch.Tensor([2]))
-            self.split_lamb=nn.Parameter(torch.Tensor([1]))
-            self.pool = nn.AvgPool2d
-            self.block_proj_n_weight = nn.Parameter(torch.zeros(1, self.blocks, self.blocks))
-            self.block_proj_n_bias = nn.Parameter(torch.zeros(1, self.blocks,1))
-            trunc_normal_(self.block_proj_n_weight,std=1e-6)
-
-        self.init_bias_table()
 
     def rel_locl_init(self,wh, num_blocks, register_name='window'):
                                 # define a parameter table of relative position bias
@@ -170,33 +172,56 @@ class SGatingUnit(nn.Module):
 
     def get_quadratic_rel_indices(self, num_patches,blocks):
         img_size = int(num_patches**.5)
-        rel_indices   = torch.zeros(num_patches, num_patches, 3)
+        rel_indices   = torch.zeros(num_patches, num_patches,5)
         ind = torch.arange(img_size).view(1,-1) - torch.arange(img_size).view(-1, 1)
         indx = ind.repeat(img_size,img_size)
         indy = ind.repeat_interleave(img_size,dim=0).repeat_interleave(img_size,dim=1)
-        indd = indx**2 + indy**2
-        rel_indices[:,:,2] = indd.unsqueeze(0)
+        indxx = indx**2 
+        indyy = indy**2
+        indxy = indx * indy
+        rel_indices[:,:,4] = indxy.unsqueeze(0)     
+        rel_indices[:,:,3] = indyy.unsqueeze(0)      
+        rel_indices[:,:,2] = indxx.unsqueeze(0)
         rel_indices[:,:,1] = indy.unsqueeze(0)
         rel_indices[:,:,0] = indx.unsqueeze(0)
         self.register_buffer("rel_indices", rel_indices)
-        self.pos_proj = nn.Parameter(torch.randn([3,blocks]))
+        self.attention_centers = nn.Parameter(
+            torch.zeros(blocks, 2).normal_(0.0,self.att_std)
+        )
+        attention_spreads = torch.eye(2).unsqueeze(0).repeat(blocks, 1, 1)
+        attention_spreads += torch.zeros_like(attention_spreads).normal_(0,self.att_std)
+        self.attention_spreads = nn.Parameter(attention_spreads)
+
+    def get_quadratic_pos_proj(self):
+        mu_1, mu_2 = self.attention_centers[:, 0], self.attention_centers[:, 1]
+        inv_covariance = torch.einsum('hij,hkj->hik', [self.attention_spreads, self.attention_spreads])
+        a, b, c = inv_covariance[:, 0, 0], inv_covariance[:, 0, 1], inv_covariance[:, 1, 1]
+        pos_proj =-1/2 * torch.stack([
+            -2*(a*mu_1 + b*mu_2),
+            -2*(c*mu_2 + b*mu_1),
+            a,
+            c,
+            2 * b
+        ], dim=-1)
+        return pos_proj
 
     def forward_pos(self):
         relative_position_bias = 0
         block_relative_position_bias = 0
         if self.pos:
             if self.quadratic:
-                # W,N,N
-                pos_score = torch.einsum('mnc,cw->wmn',self.rel_indices,self.pos_proj)
-                relative_position_bias = pos_score
+                # B,D
+                pos_proj = self.get_quadratic_pos_proj()
+                pos_score = torch.einsum('mnd,bd->bmn',self.rel_indices,pos_proj)
+                relative_position_bias = nn.Softmax(-1)(pos_score)
             else:
                 relative_position_bias = self.window_relative_position_bias_table[self.window_relative_position_index.view(-1)].view(
                     self.wh * self.wh, self.wh * self.wh, -1)  # Wh*Ww,Wh*Ww,block
-                relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous()  # block, Wh*Ww, Wh*Ww
-            if self.blocksplit:
-                block_relative_position_bias = self.block_relative_position_bias_table[self.block_relative_position_index.view(-1)].view(
-                    self.blocks ,self.blocks , -1)  # block*block,block*block,1
-                block_relative_position_bias = block_relative_position_bias.permute(2, 0, 1).contiguous()  # 1,block^2,block^2
+                relative_position_bias =  nn.Softmax(-1)(relative_position_bias.permute(2, 0, 1).contiguous())  # block, Wh*Ww, Wh*Ww
+                if self.blocksplit:
+                    block_relative_position_bias = self.block_relative_position_bias_table[self.block_relative_position_index.view(-1)].view(
+                        self.blocks ,self.blocks , -1)  # block*block,block*block,1
+                    block_relative_position_bias = nn.Softmax(-1)(block_relative_position_bias.permute(2, 0, 1).contiguous())  # 1,block^2,block^2
         return relative_position_bias,block_relative_position_bias
 
     def forward(self, x):
@@ -207,16 +232,18 @@ class SGatingUnit(nn.Module):
         v = x_chunks[1]
         u = self.norm(u)
         relative_position_bias, block_relative_position_bias = self.forward_pos()
-        pos_bias = torch.einsum('wmn,bwnc->bwmc',relative_position_bias,u) if self.pos else torch.zeros_like(u)  
+        # pos_bias = torch.einsum('wmn,bwnc->bwmc',relative_position_bias,u) if self.pos else torch.zeros_like(u)  
         # bwmc
-        u_1 = torch.einsum('w,wmn,bwnc->bwmc',1-self.sig(self.window_lamb),self.token_proj_n_weight,u) + self.token_proj_n_bias.unsqueeze(0)\
-         +  torch.einsum('w,bwmc->bwmc',self.sig(self.window_lamb),pos_bias)
+        win_weight = torch.einsum('w,wmn->wmn',1-self.sig(self.window_lamb),nn.Softmax(-1)(self.token_proj_n_weight))+\
+        torch.einsum('w,wmn->wmn',1-self.sig(self.window_lamb),relative_position_bias)
+        u_1 = torch.einsum('wmn,bwnc->bwmc',win_weight,u) + self.token_proj_n_bias.unsqueeze(0)
         u_1 = u_1 * v
         if self.blocksplit:
             u_2 = u.mean(2).unsqueeze(2)
-            block_pos_bias = torch.einsum('lmn,bnlc->bmlc', block_relative_position_bias,u_2) if self.pos else torch.zeros_like(u_2)
-            u_2 = torch.einsum('l,lmn,bnlc->bmlc',1-self.sig(self.block_lamb),self.block_proj_n_weight,u_2) + self.block_proj_n_bias.unsqueeze(-1)\
-            +  torch.einsum('l,bnlc->bnlc',self.sig(self.block_lamb),block_pos_bias)
+            # block_pos_bias = torch.einsum('lmn,bnlc->bmlc', block_relative_position_bias,u_2) if self.pos else torch.zeros_like(u_2)
+            block_weight = torch.einsum('w,wmn->wmn',1-self.sig(self.block_lamb),nn.Softmax(-1)(self.block_proj_n_weight))+\
+            torch.einsum('w,wmn->wmn',1-self.sig(self.block_lamb),block_relative_position_bias)
+            u_2 = torch.einsum('lmn,bnlc->bmlc',block_weight,u_2) + self.block_proj_n_bias.unsqueeze(-1)
             # b w 1 c
             u_2 = u_2 * v.mean(2).unsqueeze(2)
             # print(u_2.size())
@@ -316,7 +343,7 @@ class NestLevel(nn.Module):
             norm_layer=None, act_layer=None, pad_type='',**kwargs):
         super().__init__()
         self.block_size = block_size
-        self.pos_embed = nn.Parameter(torch.zeros(1, num_blocks, seq_length, embed_dim))
+        # self.pos_embed = nn.Parameter(torch.zeros(1, num_blocks, seq_length, embed_dim))
 
         if prev_embed_dim is not None:
             self.pool = ConvPool(prev_embed_dim, embed_dim, norm_layer=norm_layer, pad_type=pad_type,**kwargs)
@@ -343,7 +370,8 @@ class NestLevel(nn.Module):
         x = self.pool(x)
         x = x.permute(0, 2, 3, 1)  # (B, H', W', C), switch to channels last for transformer
         x = blockify(x, self.block_size)  # (B, T, N, C')
-        x = x + self.pos_embed
+        # print(x.size(),self.pos_embed.size())
+        # x = x + self.pos_embed
         x = self.encoder(x)  # (B, T, N, C')
         x = deblockify(x, self.block_size)  # (B, H', W', C')
         # Channel-first for block aggregation, and generally to replicate convnet feature map at each stage
@@ -452,8 +480,8 @@ class Nest(nn.Module):
     def init_weights(self, mode=''):
         assert mode in ('nlhb', '')
         head_bias = -math.log(self.num_classes) if 'nlhb' in mode else 0.
-        for level in self.levels:
-            trunc_normal_(level.pos_embed, std=.02, a=-2, b=2)
+        # for level in self.levels:
+        #     trunc_normal_(level.pos_embed, std=.02, a=-2, b=2)
         named_apply(partial(_init_nest_weights, head_bias=head_bias), self)
 
     @torch.jit.ignore
@@ -563,6 +591,15 @@ def nest_gmlp_s(pretrained=False, **kwargs):
     """
     model_kwargs = dict(embed_dims=(96, 192, 384),  depths=(2, 2, 20),chunks=2,**kwargs)
     model = _create_nest('nest_gmlp_s', pretrained=pretrained, **model_kwargs)
+    return model
+
+
+@register_model
+def nest_gmlp_s4(pretrained=False, **kwargs):
+    """ Nest-S @ 224x224
+    """
+    model_kwargs = dict(embed_dims=(48, 96, 192, 384),  depths=(2, 2, 4, 12),num_levels=4,chunks=2,patch_size=2,**kwargs)
+    model = _create_nest('nest_gmlp_s4', pretrained=pretrained, **model_kwargs)
     return model
 
 

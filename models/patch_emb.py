@@ -113,3 +113,41 @@ class Nest_ConvolutionalEmbed(nn.Module):
                 break
             x = self.act(x)
         return x
+    
+class Nest_ConvolutionalEmbed_2(nn.Module):
+    """ 2D Image to Patch Embedding
+    """
+    def __init__(self, img_size=224, patch_size=2, in_chans=3, embed_dim=48, flatten=True,**kwargs):
+        super().__init__()
+
+        norm_layer=partial(nn.BatchNorm2d, eps=1e-6)
+        img_size = to_2tuple(img_size)
+        patch_size = to_2tuple(patch_size)
+        self.img_size = img_size
+        self.patch_size = patch_size
+        self.grid_size = (img_size[0] // patch_size[0], img_size[1] // patch_size[1])
+        self.num_patches = self.grid_size[0] * self.grid_size[1]
+        self.flatten = flatten
+        self.in_chans=[3,48]
+        self.out_chans = [48,48]
+        self.strides=[2,1]
+        self.kernels=[3,1]
+        self.pads = [1,0]
+        self.projs = nn.Sequential(*[nn.Conv2d(in_chan, out_chan, kernel_size=kernel, stride=stride,padding=pad) for 
+        in_chan, out_chan,kernel,stride,pad in zip(self.in_chans,self.out_chans,self.kernels,self.strides,self.pads)]) 
+        self.norms = nn.Sequential(*[norm_layer(out_chan) for out_chan in self.out_chans])
+        self.act = nn.ReLU()
+
+    def forward(self, x):
+        B, C, H, W = x.shape
+        assert H == self.img_size[0] and W == self.img_size[1], \
+            f"Input image size ({H}*{W}) doesn't match model ({self.img_size[0]}*{self.img_size[1]})."
+        for i ,(proj, norm) in enumerate(zip(self.projs,self.norms)):
+            x = proj(x)
+            x = norm(x)
+
+            if i == len(self.kernels)-1:
+                x = x.transpose(2, 3)  # BCHW -> BNC
+                break
+            x = self.act(x)
+        return x

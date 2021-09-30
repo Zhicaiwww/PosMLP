@@ -17,10 +17,11 @@ warnings.filterwarnings('ignore')
 kwargs={'depth_conv': True,
   'gamma': 8,
   'pos_emb': True,
-  'stem_name' : 'PatchEmbed',#'Nest_ConvolutionalEmbed'
-  'blockwise': False,
+  'stem_name' : 'Nest_ConvolutionalEmbed',#'Nest_ConvolutionalEmbed'
+  'blockwise': True,
   'blocksplit': False,
-  'depth_conv' : True
+  'depth_conv' : True,
+    'quadratic' : True
   }
 model = models.nest_gmlp_s(**kwargs)
 

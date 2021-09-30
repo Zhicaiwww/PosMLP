@@ -1,6 +1,6 @@
 #!/bin/bash
 
-gpus=3,4,5,6
+gpus=4,5,6,7
 gpun=4
 master_port=2953
 shift

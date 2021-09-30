@@ -125,7 +125,9 @@ figure/
 *.tar
 #
 .vscode/
-Untitled.ipynb
+.distributed_train.sh
+.distributed_train1.sh
+.Untitled.ipynb
 # sublime project settings
 *.sublime-workspace
 *.sublime-project

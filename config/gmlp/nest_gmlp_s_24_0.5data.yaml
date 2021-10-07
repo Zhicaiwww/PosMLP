@@ -60,8 +60,9 @@ model_hyper:
   pos_emb : true
   stem_name : 'Nest_ConvolutionalEmbed'  # Nest_ConvolutionalEmbed or PatchEmbed
   blockwise : False
-  blocksplit : True
+  blocksplit : false
   quadratic : True
+  channel_split: 4
 model_ema: true
 model_ema_decay: 0.99992
 model_ema_force_cpu: false

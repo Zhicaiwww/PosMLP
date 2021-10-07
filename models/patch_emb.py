@@ -90,8 +90,8 @@ class Nest_ConvolutionalEmbed(nn.Module):
         self.grid_size = (img_size[0] // patch_size[0], img_size[1] // patch_size[1])
         self.num_patches = self.grid_size[0] * self.grid_size[1]
         self.flatten = flatten
-        self.in_chans=[3,48,96]
-        self.out_chans = [48,96,96]
+        self.in_chans=[in_chans,embed_dim//2,embed_dim]
+        self.out_chans = [embed_dim//2,embed_dim,embed_dim]
         self.strides=[2,2,1]
         self.kernels=[3,3,1]
         self.pads = [1,1,0]
@@ -128,8 +128,8 @@ class Nest_ConvolutionalEmbed_2(nn.Module):
         self.grid_size = (img_size[0] // patch_size[0], img_size[1] // patch_size[1])
         self.num_patches = self.grid_size[0] * self.grid_size[1]
         self.flatten = flatten
-        self.in_chans=[3,48]
-        self.out_chans = [48,48]
+        self.in_chans=[in_chans,embed_dim]
+        self.out_chans = [embed_dim,embed_dim]
         self.strides=[2,1]
         self.kernels=[3,1]
         self.pads = [1,0]

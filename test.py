@@ -7,7 +7,7 @@ import models
 
 import argparse
 parser = argparse.ArgumentParser(description='ViP Training and Evaluating')
-parser.add_argument('-t', '--type', default='thop', type=str,
+parser.add_argument('-t', '--type', default='', type=str,
                     help='check which type to summary model')
 args = parser.parse_args()
 
@@ -15,15 +15,17 @@ models.list_models()
 warnings.filterwarnings('ignore')
 # input=torch.randn([1,3,224,224])
 kwargs={'depth_conv': True,
-  'gamma': 8,
-  'pos_emb': True,
-  'stem_name' : 'Nest_ConvolutionalEmbed',#'Nest_ConvolutionalEmbed'
-  'blockwise': True,
-  'blocksplit': False,
-  'depth_conv' : True,
-    'quadratic' : True
+        'gamma': 8,
+        'pos_emb': True,
+        'stem_name' :'PatchEmbed',# 'PatchEmbed' ,#'Nest_ConvolutionalEmbed',#'Nest_ConvolutionalEmbed'
+        'blockwise': False,
+        'blocksplit': False,
+        'depth_conv' : True,
+        'quadratic' : True,
+        'channel_split': 24,
+        'pos_only': True
   }
-model = models.nest_gmlp_s(**kwargs)
+model = models.gmlp_s16_224()
 
 
 if args.type == 'ptflops':
@@ -37,10 +39,29 @@ if args.type == 'ptflops':
 elif args.type == 'torchsummary':
     from torchsummary import summary
     summary(model.cuda(),(3,224,224))
-else :
+
+
+elif args.type == 'thop' :
     input=torch.randn([1,3,224,224])
     for name,parameters in model.named_parameters():
         print(name,':',parameters.size())
-
+    
     flop,para = profile(model,inputs=(input,))
     print('with input size {}, model has para numbers {} and flops {} '.format(input.size(),para,flop))
+
+else:
+    import torch
+    # from torchvision.models import resnet50
+    from fvcore.nn import FlopCountAnalysis, parameter_count_table
+
+    # 创建resnet50网络
+    # 创建输入网络的tensor
+    tensor = (torch.rand(1, 3, 224, 224),)
+    for name,parameters in model.named_parameters():
+        print(name,':',parameters.size())
+    # 分析FLOPs
+    flops = FlopCountAnalysis(model, tensor)
+    print("FLOPs: ", flops.total())
+
+    # 分析parameters
+    print(parameter_count_table(model))

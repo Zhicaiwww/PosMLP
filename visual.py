@@ -214,14 +214,43 @@ def show_qua_weight(path,indexes=[0,-1], is_all = True,save_path=None):
 
 
 
-path = '/data/zhicai/ckpts/Mgmlp/train/20211003-150040-nest_gmlp_s-224/checkpoint-129.pth.tar'
+path = '/data/zhicai/ckpts/Mgmlp/train/20211009-113958-nest_gmlp_s-224/checkpoint-50.pth.tar'
 # show_weight(path,is_all = True, save_path='gmlp_s')
 # summary_list=['/data/zhicai/ckpts/Mgmlp/train/20210924-223448-nest_gmlp_s-224/summary.csv',
 # '/home/zhicai/Mglp/output/train/20210923-105647-nest_scgmlp_s-224/summary.csv']
 # name_list = ['nest_gmlp_s_conv_pos',
 # 'nest_gmlp_s_pos']
 # draw_acc(summary_list,name_list)
-
+show_para(path)
 # show_weight(path, save_path='gmlp_s_pos_all(wight_and_posBias)')
 
-show_qua_weight(path,is_all = True, save_path='gmlp_s_quaposonly')
+# 
+
+
+
+
+# from models.nest_gmlp import QuaMap,LearnedPosMap
+# import torch
+
+# gamma = 24
+
+# model = QuaMap(dim=96,seq_len=196,blocks=16,gamma=gamma)
+# model_2 = LearnedPosMap(dim=96,seq_len=196,blocks=16,gamma=gamma)
+
+
+# from fvcore.nn import FlopCountAnalysis, parameter_count_table
+
+# # 创建resnet50网络
+# # 创建输入网络的tensor
+# tensor = (torch.randn([1,16,196,96]))
+
+# # 分析FLOPs
+# flops = FlopCountAnalysis(model, tensor)
+# flops_2 = FlopCountAnalysis(model_2, tensor)
+# print("FLOPs: ", flops.total())
+# # 分析parameters
+# print(parameter_count_table(model))
+
+# print("FLOPs: ", flops_2.total())
+# # 分析parameters
+# print(parameter_count_table(model_2))

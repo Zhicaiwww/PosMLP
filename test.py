@@ -14,18 +14,14 @@ args = parser.parse_args()
 models.list_models()
 warnings.filterwarnings('ignore')
 # input=torch.randn([1,3,224,224])
-kwargs={'depth_conv': True,
-        'gamma': 8,
-        'pos_emb': True,
-        'stem_name' :'PatchEmbed',# 'PatchEmbed' ,#'Nest_ConvolutionalEmbed',#'Nest_ConvolutionalEmbed'
-        'blockwise': False,
-        'blocksplit': False,
-        'depth_conv' : True,
+kwargs={
+        'stem_name' :'Nest_ConvolutionalEmbed',# 'PatchEmbed' ,#'Nest_ConvolutionalEmbed',#'Nest_ConvolutionalEmbed'
         'quadratic' : True,
-        'channel_split': 24,
-        'pos_only': True
+        'pos_only': True,
+        'gamma': 16,
+
   }
-model = models.gmlp_s16_224()
+model = models.nest_gmlp_s_v3(**kwargs)
 
 
 if args.type == 'ptflops':

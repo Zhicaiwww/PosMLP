@@ -16,12 +16,12 @@ import torch.nn.parallel
 from collections import OrderedDict
 from contextlib import suppress
 
-from timm.models import create_model, apply_test_time_pool, load_checkpoint, is_model, list_models
+from timm.models import apply_test_time_pool, load_checkpoint, is_model, list_models
 from timm.models.helpers import load_state_dict
 from timm.data import create_dataset, create_loader, resolve_data_config, RealLabelsImagenet
 from timm.utils import accuracy, AverageMeter, natural_key, setup_default_logging, set_jit_legacy
 import models
-
+from models import create_model
 has_apex = False
 try:
     from apex import amp
@@ -63,7 +63,7 @@ parser.add_argument('--mean', type=float, nargs='+', default=None, metavar='MEAN
                     help='Override mean pixel value of dataset')
 parser.add_argument('--std', type=float,  nargs='+', default=None, metavar='STD',
                     help='Override std deviation of of dataset')
-parser.add_argument('--interpolation', default='', type=str, metavar='NAME',
+parser.add_argument('--interpolation', default='bilinear', type=str, metavar='NAME',
                     help='Image resize interpolation type (overrides model)')
 parser.add_argument('--num-classes', type=int, default=None,
                     help='Number classes in dataset')
@@ -109,7 +109,7 @@ parser.add_argument('--valid-labels', default='', type=str, metavar='FILENAME',
                     help='Valid label indices txt file for validation of partial label space')
 
 
-def validate(args):
+def validate(args,**model_hyper):
     # might as well try to validate something
     args.pretrained = args.pretrained or not args.checkpoint
     args.prefetcher = not args.no_prefetcher
@@ -141,13 +141,14 @@ def validate(args):
         in_chans=3,
         global_pool=args.gp,
         scriptable=args.torchscript,
-        img_size=args.img_size)
+        img_size=args.img_size,
+        **model_hyper)
     if args.num_classes is None:
         assert hasattr(model, 'num_classes'), 'Model must have `num_classes` attr if not set on cmd line/config.'
         args.num_classes = model.num_classes
 
     if args.checkpoint:
-        load_checkpoint(model, args.checkpoint, args.use_ema, strict=False)
+        load_checkpoint(model, args.checkpoint, args.use_ema, strict=True)
 
     param_count = sum([m.numel() for m in model.parameters()])
     _logger.info('Model %s created, param count: %d' % (args.model, param_count))
@@ -194,14 +195,24 @@ def validate(args):
         dataset,
         input_size=data_config['input_size'],
         batch_size=args.batch_size,
+        is_training=True,
         use_prefetcher=args.prefetcher,
         interpolation=data_config['interpolation'],
         mean=data_config['mean'],
         std=data_config['std'],
+        hflip=0.5,
+        vflip=0,
         num_workers=args.workers,
         crop_pct=crop_pct,
         pin_memory=args.pin_mem,
         tf_preprocessing=args.tf_preprocessing)
+
+
+
+
+
+
+
 
     batch_time = AverageMeter()
     losses = AverageMeter()
@@ -276,12 +287,16 @@ def validate(args):
 
 
 def main():
+    import yaml
     setup_default_logging()
     args = parser.parse_args()
     model_cfgs = []
     model_names = []
     if os.path.isdir(args.checkpoint):
         # validate all checkpoints in a path with same model
+        file = open(args.checkpoint + 'args.yaml')
+        config = yaml.load(file)
+        model_hyper = config['model_hyper']
         checkpoints = glob.glob(args.checkpoint + '/*.pth.tar')
         checkpoints += glob.glob(args.checkpoint + '/*.pth')
         model_names = list_models(args.model)
@@ -314,7 +329,7 @@ def main():
                     try:
                         args.batch_size = batch_size
                         print('Validating with batch size: %d' % args.batch_size)
-                        r = validate(args)
+                        r = validate(args,**model_hyper)
                     except RuntimeError as e:
                         if batch_size <= args.num_gpu:
                             print("Validation failed with no ability to reduce batch size. Exiting.")
@@ -331,7 +346,15 @@ def main():
         if len(results):
             write_results(results_file, results)
     else:
-        validate(args)
+        file = open(os.path.dirname(args.checkpoint) + '/args.yaml')
+        config = yaml.load(file)
+        model_hyper = config['model_hyper']
+        validate(args,**model_hyper)
+
+
+
+
+
 
 
 def write_results(results_file, results):

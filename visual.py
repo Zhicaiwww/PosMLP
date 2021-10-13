@@ -214,14 +214,43 @@ def show_qua_weight(path,indexes=[0,-1], is_all = True,save_path=None):
 
 
 
-path = '/data/zhicai/ckpts/Mgmlp/train/20211009-113958-nest_gmlp_s-224/checkpoint-50.pth.tar'
+path = '/data/zhicai/ckpts/Mgmlp/train/20211010-120103-nest_gmlp_s-224/checkpoint-125.pth.tar'
 # show_weight(path,is_all = True, save_path='gmlp_s')
 # summary_list=['/data/zhicai/ckpts/Mgmlp/train/20210924-223448-nest_gmlp_s-224/summary.csv',
 # '/home/zhicai/Mglp/output/train/20210923-105647-nest_scgmlp_s-224/summary.csv']
 # name_list = ['nest_gmlp_s_conv_pos',
 # 'nest_gmlp_s_pos']
 # draw_acc(summary_list,name_list)
-show_para(path)
+import torch
+path = '/data/zhicai/ckpts/Mgmlp/train/20211010-120103-nest_gmlp_s-224_qua_ga32_77.02/model_best.pth.tar'
+# show_weight(path,is_all = True, save_path='gmlp_s')
+# summary_list=['/data/zhicai/ckpts/Mgmlp/train/20210924-223448-nest_gmlp_s-224/summary.csv',
+# '/home/zhicai/Mglp/output/train/20210923-105647-nest_scgmlp_s-224/summary.csv']
+# name_list = ['nest_gmlp_s_conv_pos',
+# 'nest_gmlp_s_pos']
+# draw_acc(summary_list,name_list)
+def show_center(path):
+    ckpt = torch.load(path,map_location='cpu')
+    a = [[],[]]
+    for i,v in ckpt['state_dict_ema'].items():
+        if 'attention_centers' in i :
+            a[0].append((i,v))
+        elif 'attention_spreads' in i :
+            a[1].append((i,v)) 
+    ca=[]
+    sa=[]
+    for i,(c,s) in enumerate(zip(a[0],a[1])):
+        if i < 2:
+            b = 16
+        elif i < 4:
+            b = 4
+        else:
+            b = 1
+        ca.append(c[1].view(b,-1,2))
+        sa.append(s[1].view(b,-1,2,2))      
+    return ca,sa
+c,s = show_center(path)
+show_center(path)
 # show_weight(path, save_path='gmlp_s_pos_all(wight_and_posBias)')
 
 # 

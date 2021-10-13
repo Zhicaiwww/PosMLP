@@ -15,13 +15,15 @@ models.list_models()
 warnings.filterwarnings('ignore')
 # input=torch.randn([1,3,224,224])
 kwargs={
-        'stem_name' :'Nest_ConvolutionalEmbed',# 'PatchEmbed' ,#'Nest_ConvolutionalEmbed',#'Nest_ConvolutionalEmbed'
+        'stem_name' :'Nest_ConvolutionalEmbed_2',# 'PatchEmbed' ,#'Nest_ConvolutionalEmbed',#'Nest_ConvolutionalEmbed'
         'quadratic' : True,
         'pos_only': True,
         'gamma': 16,
+        'channel_split': 24,
+        'generalized': True
 
   }
-model = models.nest_gmlp_s_v3(**kwargs)
+model = models.nest_gmlp_s4_p2(**kwargs)
 
 
 if args.type == 'ptflops':

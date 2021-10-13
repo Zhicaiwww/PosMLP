@@ -43,19 +43,26 @@ default_cfgs = {
 
 
 class QuaMap(nn.Module):
-    def __init__(self,dim, seq_len, blocks,gamma=4, use_softmax=True,att_std = 1e-4,**kwargs):
+    def __init__(self,dim, seq_len, blocks,gamma=4, channel_split = None,use_softmax=True,att_std = 1e-4,generalized=False,**kwargs):
         super().__init__()
         self.dim = dim
         self.att_std = att_std 
         self.seq_len = seq_len
         self.blocks = blocks
-        self.gamma = gamma
+        self.gamma = gamma if channel_split is None else dim // channel_split
         self.use_softmax = use_softmax
         self.channel_split = self.dim//self.gamma
-        self.get_quadratic_rel_indices(self.seq_len,self.blocks,gamma=self.gamma)
-        self.token_proj_n_bias = nn.Parameter(torch.zeros(self.blocks*self.gamma, seq_len,1))
+        self.generalized = generalized
+        self.sft=nn.Softmax(-1) if use_softmax else nn.Identity()
+        if self.generalized:
+            self.get_general_quadratic_rel_indices(self.seq_len,self.blocks,gamma=self.gamma)
+            self.forward_pos=self.forward_generalized_qua_pos
+        else: 
+            self.get_quadratic_rel_indices(self.seq_len,self.blocks,gamma=self.gamma)
+            self.forward_pos=self.forward_qua_pos
+        self.token_proj_n_bias = nn.Parameter(torch.zeros(self.blocks, seq_len,1))
 
-    def get_quadratic_rel_indices(self, num_patches,blocks,gamma=1):
+    def get_general_quadratic_rel_indices(self, num_patches,blocks,gamma=1):
         img_size = int(num_patches**.5)
         rel_indices   = torch.zeros(num_patches, num_patches,5)
         ind = torch.arange(img_size).view(1,-1) - torch.arange(img_size).view(-1, 1)
@@ -64,7 +71,7 @@ class QuaMap(nn.Module):
         indxx = indx**2 
         indyy = indy**2
         indxy = indx * indy
-        rel_indices[:,:,4] = torch.sigmoid(indxy.unsqueeze(0))
+        rel_indices[:,:,4] =  indxy.unsqueeze(0)
         rel_indices[:,:,3] = indyy.unsqueeze(0)      
         rel_indices[:,:,2] = indxx.unsqueeze(0)
         rel_indices[:,:,1] = indy.unsqueeze(0)
@@ -77,11 +84,28 @@ class QuaMap(nn.Module):
         attention_spreads += torch.zeros_like(attention_spreads).normal_(0,self.att_std)
         self.attention_spreads = nn.Parameter(attention_spreads)
 
+    def get_quadratic_rel_indices(self, num_patches,blocks,gamma=1):
+        img_size = int(num_patches**.5)
+        rel_indices   = torch.zeros(num_patches, num_patches,3)
+        ind = torch.arange(img_size).view(1,-1) - torch.arange(img_size).view(-1, 1)
+        indx = ind.repeat(img_size,img_size)
+        indy = ind.repeat_interleave(img_size,dim=0).repeat_interleave(img_size,dim=1)
+        indd = indx**2 + indy**2
+        rel_indices[:,:,2] = indd.unsqueeze(0)
+        rel_indices[:,:,1] = indy.unsqueeze(0)
+        rel_indices[:,:,0] = indx.unsqueeze(0)
+        self.register_buffer("rel_indices", rel_indices)
+        self.attention_centers = nn.Parameter(
+            torch.zeros(blocks*gamma, 2).normal_(0.0,self.att_std)
+        )
+        attention_spreads = 1 + torch.zeros(blocks*gamma).normal_(0, self.att_std)
+        self.attention_spreads = nn.Parameter(attention_spreads)
 
 
-    def forward_pos(self):
-        relative_position_bias = 0
+
+    def forward_generalized_qua_pos(self):
         # B,D
+
         mu_1, mu_2 = self.attention_centers[:, 0], self.attention_centers[:, 1]
         inv_covariance = torch.einsum('hij,hkj->hik', [self.attention_spreads, self.attention_spreads])
         a, b, c = inv_covariance[:, 0, 0], inv_covariance[:, 0, 1], inv_covariance[:, 1, 1]
@@ -97,27 +121,40 @@ class QuaMap(nn.Module):
 
         # bs m n
         pos_score = torch.einsum('mnd,bd->bmn',self.rel_indices,pos_proj)
-        if self.use_softmax:
-            relative_position_bias = nn.Softmax(-1)(pos_score)
-        else: 
-            relative_position_bias = pos_score
+        relative_position_bias = self.sft(pos_score)
+        return relative_position_bias
+
+    def forward_qua_pos(self):
+        # B,D
+
+        mu_1, mu_2 = self.attention_centers[:, 0], self.attention_centers[:, 1]
+        # garantee is positve 
+        a = self.attention_spreads**2
+        # bs,5
+        pos_proj = torch.stack([ a*mu_1, a * mu_2 ,-1/2*torch.ones_like(mu_1)], dim=-1)
+
+        # bs m n
+        pos_score = torch.einsum('mnd,bd->bmn',self.rel_indices,pos_proj)
+        relative_position_bias = self.sft(pos_score)
+
         return relative_position_bias
 
     def forward(self,x):
         assert len(x.size()) == 4
         x = rearrange(x,'b w n (v s) -> b w n v s', s = self.gamma)
         win_weight = self.forward_pos()
+
         win_weight = rearrange(win_weight,'(s b) m n  -> b m n s', s = self.gamma)
-        x = torch.einsum('wmns,bwnvs->bwmvs',win_weight,x) +  rearrange(self.token_proj_n_bias,'(w s) m  v-> w m v s', s = self.gamma).unsqueeze(0)
+        x = torch.einsum('wmns,bwnvs->bwmvs',win_weight,x) +  self.token_proj_n_bias.unsqueeze(0).unsqueeze(-1)
         x = rearrange(x,'b w n v s -> b w n (v s)') 
         return x
 
 
 class LearnedPosMap(nn.Module):
-    def __init__(self,dim, seq_len, blocks,gamma=4,**kwargs):
+    def __init__(self,dim, seq_len, blocks,channel_split = None,gamma=4,**kwargs):
         super().__init__()
         self.blocks = blocks
-        self.gamma = gamma
+        self.gamma = gamma if channel_split is None else dim // channel_split
         self.wh =int(math.pow(seq_len,0.5))
         self.token_proj_n_bias = nn.Parameter(torch.zeros(self.blocks * self.gamma, seq_len,1))
         self.rel_locl_init(self.wh,self.blocks * self.gamma,register_name='window')
@@ -194,14 +231,6 @@ class SGatingUnit(nn.Module):
         else:
             self.pos=LearnedPosMap(self.gate_dim,seq_len,num_blocks,gamma=gamma,**kwargs)
 
-        # if self.blocksplit:
-        #     self.rel_locl_init(int(math.pow(self.blocks,0.5)),1,register_name='block')
-        #     self.block_lamb=nn.Parameter(torch.Tensor([1]))
-        #     self.split_lamb=nn.Parameter(torch.Tensor([1]))
-        #     self.pool = nn.AvgPool2d
-        #     self.block_proj_n_weight = nn.Parameter(torch.zeros(1, self.blocks, self.blocks))
-        #     self.block_proj_n_bias = nn.Parameter(torch.zeros(1, self.blocks,1))
-        #     trunc_normal_(self.block_proj_n_weight,std=1e-6)
 
         if not self.pos_only:
             self.sig = nn.Sigmoid()
@@ -221,19 +250,7 @@ class SGatingUnit(nn.Module):
         u = self.pos(self.norm(u))
         
         u = u * v
-        # if self.blocksplit:
-        #     u_2 = u.mean(2).unsqueeze(2)
-        #     # block_pos_bias = torch.einsum('lmn,bnlc->bmlc', block_relative_position_bias,u_2) if self.pos else torch.zeros_like(u_2)
-        #     block_weight = torch.einsum('w,wmn->wmn',1-self.sig(self.block_lamb),self.block_proj_n_weight)+\
-        #     torch.einsum('w,wmn->wmn',1-self.sig(self.block_lamb),block_relative_position_bias)
-        #     u_2 = torch.einsum('lmn,bnlc->bmlc',block_weight,u_2) + self.block_proj_n_bias.unsqueeze(-1)
-        #     # b w 1 c
-        #     u_2 = u_2 * v.mean(2).unsqueeze(2)
-        #     # print(u_2.size())
-        #     gating = self.split_lamb.view(1,-1,1,1)
-        #     u =  torch.sigmoid(gating) * u_1 +(1.-torch.sigmoid(gating)) * u_2
- 
-        #       return u
+
         return u
 
 class GmlpLayer(nn.Module):
@@ -327,13 +344,13 @@ class MixerLayer(nn.Module):
             nn.GELU(),
             nn.Dropout(drop),
             nn.Linear(self.hidden_dim,self.dim)])
-        self.mlp_tokens = QuaMap(dim,seq_len=seq_length,blocks=num_blocks,**kwargs)
+        # self.mlp_tokens = QuaMap(dim,seq_len=seq_length,blocks=num_blocks,**kwargs)
         self.drop_path = DropPath(drop_path_rates) if drop_path_rates > 0. else nn.Identity()
         self.mlp_tokens=nn.Sequential(*[ 
-            nn.Linear(seq_length,seq_length),
+            nn.Linear(seq_length,256),
             nn.GELU(),
             nn.Dropout(drop),
-            nn.Linear(seq_length,seq_length)])
+            nn.Linear(256,seq_length)])
 
     def forward(self, x):
         #1,B,N,C
@@ -514,7 +531,7 @@ class Nest(nn.Module):
     """
 
     def __init__(self, img_size=224, in_chans=3, patch_size=4, num_levels=3, embed_dims=(128, 256, 512),
-                  depths=(2, 2, 20), num_classes=1000, mlp_ratio=4., gate_unit=SGatingUnit,gate_layer=GmlpLayer,
+                  depths=(2, 2, 20), num_classes=1000, mlp_ratio=(4,4,4), gate_unit=SGatingUnit,gate_layer=GmlpLayer,
                  drop_rate=0.,  drop_path_rate=0.5, norm_layer=partial(nn.LayerNorm, eps=1e-6), act_layer=nn.GELU,
                  pad_type='', weight_init='', global_pool='avg',stem_name = "PatchEmbed",**kwargs):
         """
@@ -552,6 +569,7 @@ class Nest(nn.Module):
             if isinstance(param_value, collections.abc.Sequence):
                 assert len(param_value) == num_levels, f'Require `len({param_name}) == num_levels`'
 
+        assert len(mlp_ratio)==len(depths)==len(embed_dims)==num_levels
         embed_dims = to_ntuple(num_levels)(embed_dims)
         depths = to_ntuple(num_levels)(depths)
         self.num_classes = num_classes
@@ -592,7 +610,7 @@ class Nest(nn.Module):
             dim = embed_dims[i]
             levels.append(NestLevel(
                 self.num_blocks[i], self.block_size, gate_unit,self.seq_length,depths[i], dim, gate_layer=gate_layer,prev_embed_dim=prev_dim,
-                mlp_ratio=mlp_ratio,  drop_rate=drop_rate, drop_path_rates = dp_rates[i], norm_layer=norm_layer, act_layer=act_layer, pad_type=pad_type,**kwargs))
+                mlp_ratio=mlp_ratio[i],  drop_rate=drop_rate, drop_path_rates = dp_rates[i], norm_layer=norm_layer, act_layer=act_layer, pad_type=pad_type,**kwargs))
             self.feature_info += [dict(num_chs=dim, reduction=curr_stride, module=f'levels.{i}')]
             prev_dim = dim
             curr_stride *= 2
@@ -683,7 +701,7 @@ def nest_gmlp_l(pretrained=False, **kwargs):
     """ Nest-B @ 224x224
     """
     model_kwargs = dict(
-        embed_dims=(192, 384, 768), depths=(2, 2, 20),chunks=2, **kwargs)
+        embed_dims=(192, 384, 768), depths=(2, 2, 20),chunks=2, mlp_ratio=(4,4,4),**kwargs)
     model = _create_nest('nest_gmlp_b', pretrained=pretrained, **model_kwargs)
     return model
 
@@ -692,7 +710,7 @@ def nest_gmlp_b(pretrained=False, **kwargs):
     """ Nest-B @ 224x224
     """
     model_kwargs = dict(
-        embed_dims=(128, 256, 512), depths=(2, 2, 20),chunks=2, **kwargs)
+        embed_dims=(128, 256, 512), depths=(2, 2, 20),chunks=2,mlp_ratio=(4,4,4), **kwargs)
     model = _create_nest('nest_gmlp_b', pretrained=pretrained, **model_kwargs)
     return model
 
@@ -701,7 +719,7 @@ def nest_gmlp_b(pretrained=False, **kwargs):
 def nest_gmlp_s(pretrained=False, **kwargs):
     """ Nest-S @ 224x224
     """
-    model_kwargs = dict(embed_dims=(96, 192, 384),  depths=(2, 2, 20),**kwargs)
+    model_kwargs = dict(embed_dims=(96, 192, 384),  depths=(2, 2, 20),mlp_ratio=(4,4,4),**kwargs)
     model = _create_nest('nest_gmlp_s', pretrained=pretrained, **model_kwargs)
     return model
 
@@ -719,14 +737,14 @@ def nest_gmlp_s_v2(pretrained=False, **kwargs):
 def nest_gmlp_s_v3(pretrained=False, **kwargs):
     """ Nest-S @ 224x224
     """
-    model_kwargs = dict(embed_dims=(96, 192, 384),  depths=(2, 2, 20),chunks=1,gate_layer=MixerLayer,mlp_ratio=3,**kwargs)
+    model_kwargs = dict(embed_dims=(96, 192, 384),  depths=(2, 2, 20),chunks=1,gate_layer=MixerLayer,mlp_ratio=4,**kwargs)
     model = _create_nest('nest_gmlp_s', pretrained=pretrained, **model_kwargs)
     return model
-
+@register_model
 def nest_gmlp_s_v4(pretrained=False, **kwargs):
     """ Nest-S @ 224x224
     """
-    model_kwargs = dict(embed_dims=(96, 192, 384),  depths=(2, 2, 20),chunks=1,gate_layer=MixerLayer_2,mlp_ratio=3,**kwargs)
+    model_kwargs = dict(embed_dims=(96, 192, 384),  depths=(2, 2, 20),chunks=1,gate_layer=MixerLayer_2,mlp_ratio=4,**kwargs)
     model = _create_nest('nest_gmlp_s', pretrained=pretrained, **model_kwargs)
     return model
 
@@ -735,7 +753,7 @@ def nest_gmlp_s_v4(pretrained=False, **kwargs):
 def nest_gmlp_s4_p2(pretrained=False, **kwargs):
     """ Nest-S @ 224x224
     """
-    model_kwargs = dict(embed_dims=(48, 96, 192, 384),  depths=(2, 2, 4, 16),num_levels=4,chunks=2,patch_size=2,**kwargs)
+    model_kwargs = dict(embed_dims=(48, 96, 192, 384),  depths=(2, 2, 4, 16),mlp_ratio=(2,4,4,4),num_levels=4,chunks=2,patch_size=2,**kwargs)
     model = _create_nest('nest_gmlp_s4', pretrained=pretrained, **model_kwargs)
     return model
 
@@ -743,15 +761,7 @@ def nest_gmlp_s4_p2(pretrained=False, **kwargs):
 def nest_gmlp_s4_p4(pretrained=False, **kwargs):
     """ Nest-S @ 224x224
     """
-    model_kwargs = dict(embed_dims=(96, 192, 384,768),  depths=(2, 4, 8, 10),num_levels=4,chunks=2,patch_size=4,**kwargs)
-    model = _create_nest('nest_gmlp_s4', pretrained=pretrained, **model_kwargs)
-    return model
-
-@register_model
-def nest_gmlp_s4_p4(pretrained=False, **kwargs):
-    """ Nest-S @ 224x224
-    """
-    model_kwargs = dict(embed_dims=(96, 192, 384,768),  depths=(2, 4, 12, 4),num_levels=4,chunks=2,patch_size=4,**kwargs)
+    model_kwargs = dict(embed_dims=(48, 96, 192, 384),  depths=(2, 4, 6, 10),mlp_ratio=(2,4,4,4),num_levels=4,chunks=2,patch_size=4,**kwargs)
     model = _create_nest('nest_gmlp_s4', pretrained=pretrained, **model_kwargs)
     return model
 

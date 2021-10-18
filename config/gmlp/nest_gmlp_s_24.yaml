@@ -27,7 +27,7 @@ drop_block: null
 drop_connect: null
 drop_path: 0.1
 epoch_repeats: 0.0
-epochs: 120
+epochs: 300
 eval_metric: top1
 experiment: ''
 gp: null
@@ -40,7 +40,7 @@ jsd: false
 local_rank: 0
 log_interval: 50
 log_wandb: false
-lr: 0.0016
+lr: 0.0007
 lr_cycle_limit: 1
 lr_cycle_mul: 1.0
 lr_noise: null
@@ -53,14 +53,15 @@ mixup_mode: batch
 mixup_off_epoch: 0
 mixup_prob: 1.0
 mixup_switch_prob: 0.5
-model: nest_gmlp_s
+model: nest_s_224
 model_hyper:
+  gamma : 8
+  depth_conv : true
+  pos_emb : true
   stem_name : 'Nest_ConvolutionalEmbed'  # Nest_ConvolutionalEmbed or PatchEmbed
+  blockwise : False
+  blocksplit : True
   quadratic : True
-  # gamma: 16
-  generalized: True
-  pos_only : True
-  chunks : 2
 model_ema: true
 model_ema_decay: 0.99992
 model_ema_force_cpu: false
@@ -86,7 +87,7 @@ remode: pixel
 reprob: 0.0
 resplit: false
 resume: ''
-sample_ratio: 0.5
+sample_ratio: 1
 save_images: false
 scale:
 - 0.08

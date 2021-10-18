@@ -14,16 +14,24 @@ args = parser.parse_args()
 models.list_models()
 warnings.filterwarnings('ignore')
 # input=torch.randn([1,3,224,224])
+# input=torch.randn([1,3,224,224])
 kwargs={
         'stem_name' :'Nest_ConvolutionalEmbed',# 'PatchEmbed' ,#'Nest_ConvolutionalEmbed',#'Nest_ConvolutionalEmbed'
         'quadratic' : True,
         'pos_only': True,
-        'gamma': 16,
+        'gamma': (8,16,32,64),
+        "embed_dims" :(96, 192, 384,768),
+        "depths" : (2, 2, 18,2),
+        "mlp_ratio" : (4,4,4,2),
+        "num_levels": 4,
+        'generalized': True,
+        'img_size':(224,224),
+        'chunks':2,
+        'num_blocks':(16,4,1,1)
 
   }
-model = models.nest_gmlp_s_v3(**kwargs)
-
-
+model = models.nest_gmlp_s()
+# model = models.mixer_s16_224()
 if args.type == 'ptflops':
     from ptflops import get_model_complexity_info
     with torch.cuda.device(0):

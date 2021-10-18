@@ -2,7 +2,7 @@ import csv
 import matplotlib.pyplot as plt 
 import os
 import numpy as np
-import torch.nn as nn
+import torch.nn as nn 
 import torch
 color_list = ['red','blue','green','orange','salmon']
 
@@ -60,7 +60,7 @@ def show_weight(path,indexes=[0,-1],is_all = True,save_path=None):
             to_vw.append(v.cpu())
         if "token_proj_n_bias" in k :
             to_kb.append(k)
-            to_vb.append(v.squeeze())
+            to_vb.append(v.squeeze(-1))
         if 'gate_unit.window_relative_position_bias_table' in k:
             to_kp.append(k)
             to_vp.append(v.squeeze(0))
@@ -68,19 +68,19 @@ def show_weight(path,indexes=[0,-1],is_all = True,save_path=None):
             to_kidx.append(k)
             to_vidx.append(v.cpu())
     print(f"number of figures is {len(to_kp)}")
-    if len(to_kp) is not 0:
+    if len(to_kp) != 0:
         import math
         bias_map =[]
         for vp in to_vp:
             h,w = to_vidx[0].size()
-            bias_map.append(vp[to_vidx[0].view(-1)].view(h,w))
+            bias_map.append(vp[to_vidx[0].view(-1)][:,0].view(h,w))
     idxs = range(len(to_kp)) if is_all else indexes
     for idx in idxs:
         fig = plt.figure(figsize=(16, 16),tight_layout=True)
         ax = fig.add_subplot(2,2,1)
         ax.imshow(bias_map[idx])
         ax = fig.add_subplot(2,2,2)
-        ax.imshow(bias_map[idx])
+        ax.plot(to_vb[idx][0])
         ax = fig.add_subplot(2,2,3)
         ax.imshow(bias_map[idx])
         ax = fig.add_subplot(2,2,4)
@@ -102,29 +102,15 @@ def show_weight(path,indexes=[0,-1],is_all = True,save_path=None):
         else:
             plt.show()
 
+
 def show_para(path):
-    ckpt = torch.load(path)
+    ckpt = torch.load(path,map_location='cpu')
     for i,v in ckpt['state_dict_ema'].items():
         print(f"{i}： {v.size()}")
 
 
-def show_pos(path):
-    ckpt = torch.load(path,map_location='cpu')
-    a = [[],[],[]]
-    for i,v in ckpt['state_dict_ema'].items():
-        if 'window_lamb' in i :
-            a[0].append((i,v))
-        elif 'block_lamb' in i :
-            a[1].append((i,v))       
-        elif 'split_lamb' in i :
-            a[2].append((i,v))
-    for i in a:
-        print('\n')
-        for j in i:
-            print(j)
-                # break
 
-def to_qua_att_map(rel_indices,attention_centers,attention_spreads):
+def to_qua_att_map(rel_indices,attention_centers,attention_spreads,levels=[2,2,20],idx=0,for_weight=True,pixel_idx=50):
 
     mu_1, mu_2 = attention_centers[:, 0], attention_centers[:, 1]
     inv_covariance = torch.einsum('hij,hkj->hik', [attention_spreads, attention_spreads])
@@ -137,11 +123,26 @@ def to_qua_att_map(rel_indices,attention_centers,attention_spreads):
         c,
         2 * b
     ], dim=-1)
-    pos_score = torch.einsum('mnd,bd->bmn',rel_indices,pos_proj)
-    return pos_score[0].squeeze(0)
+    pos_score = nn.Softmax(-1)(torch.einsum('mnd,bd->bmn',rel_indices,pos_proj))
 
-
-def show_qua_weight(path,indexes=[0,-1], is_all = True,save_path=None):
+    import math
+    bs,m,n=pos_score.size()
+    h = int(math.sqrt(n))
+    if idx < levels[0]:
+        blocks = 16
+    elif idx < levels[0]+levels[1]:
+        blocks= 4
+    else:
+        blocks= 1
+    s = bs//blocks
+    if for_weight:
+        return pos_score.view(blocks,s,m,n)
+    else:
+        pos_score=pos_score.view(blocks,s,m,h,h)[:,:,pixel_idx] + 1
+    # bs m n 
+    return pos_score
+    
+def show_qua_weight(path,indexes=[0,-1], is_all = True,for_weight=False,levels=[2,2,20],save_path=None):
     ckpt = torch.load(path,map_location='cpu')
     to_kw=[]
     to_vw=[]
@@ -175,30 +176,62 @@ def show_qua_weight(path,indexes=[0,-1], is_all = True,save_path=None):
     if len(to_kri) != 0:
         import math
         bias_map =[]
-        for vri,vrct,vrcs in zip(to_vri,to_vrct,to_vrcs):
-            bias_map.append(to_qua_att_map(vri,vrct,vrcs))
+        for idx,(vri,vrct,vrcs) in enumerate(zip(to_vri,to_vrct,to_vrcs)):
+            bias_map.append(to_qua_att_map(vri,vrct,vrcs,levels,idx,for_weight=for_weight,))
     idxs = range(len(to_kb)) if is_all else indexes
-    splits = to_vri[-1].size(0)
+
     for idx in idxs:
-        fig = plt.figure(figsize=(16,16),tight_layout=True)
-        ax = fig.add_subplot(2,2,1)
-        #ax.imshow(to_vw[idx])
-        ax.imshow(bias_map[idx])
-        ax = fig.add_subplot(2,2,2)
-        # if len(to_kb) != 0:
-        #     ax.plot(to_vb[idx])
-        # else:
-        ax.plot(bias_map[idx][50],color = color_list[1],label='vb')
-        ax = fig.add_subplot(2,2,3)
-        ax.imshow(nn.Softmax(-1)(bias_map[idx]))
-        # ax.imshow(to_vw[idx]+bias_map[idx])
-        ax = fig.add_subplot(2,2,4)
-        # ax.plot(to_vw[idx][50],color = color_list[0],label='vw')
-        ax.plot(nn.Softmax(-1)(bias_map[idx])[50],color = color_list[1],label='vb')
-        # ax.plot(to_vw[idx][50]+bias_map[idx][50],color = color_list[2],label='vw+vb')
-        ax.set_ylabel('score')
-        ax.set_xlabel('N')
-        ax.legend()
+        if for_weight:
+            # fig = plt.figure(figsize=(16,16),tight_layout=True)
+            # ax = fig.add_subplot(2,2,1)
+            # ax.imshow(bias_map[idx])
+            # ax = fig.add_subplot(2,2,2)
+            # ax.plot(to_vb[idx],color = color_list[1],label='vb')
+            # ax = fig.add_subplot(2,2,3)
+            # ax.imshow(bias_map[idx])
+            # ax = fig.add_subplot(2,2,4)
+            # ax.plot(bias_map[idx][40],color = color_list[1],label='vb')
+            # ax.set_ylabel('score')
+            # ax.set_xlabel('N')
+            # ax.legend()
+
+            layer_atts=bias_map[idx]
+            b,s,m,n =layer_atts.size()
+            fig = plt.figure(figsize=(2*s,2*b),tight_layout=True)
+            
+            cnt = 1
+            for i in range(b):
+                for j in range(s):
+                    ax = fig.add_subplot(b,s,cnt)
+                    
+                    ax.plot(layer_atts[i,j,50],color = color_list[1],label='vb')
+                    ax.set_xticks([])
+                    ax.set_yticks([])
+
+                    cnt+=1
+            fig.tight_layout()#调整整体空白
+            plt.subplots_adjust(wspace =0, hspace =0)#调整子图间距
+        else:
+
+            layer_atts=bias_map[idx]
+            b,s,h,w =layer_atts.size()
+            fig = plt.figure(figsize=(2*s,2*b),tight_layout=True)
+            
+            cnt = 1
+            for i in range(b):
+                for j in range(s):
+                    ax = fig.add_subplot(b,s,cnt)
+                    
+                    ax.imshow(layer_atts[i,j])
+                    ax.set_xticks([])
+                    ax.set_yticks([])
+
+                    cnt+=1
+            fig.tight_layout()#调整整体空白
+            plt.subplots_adjust(wspace =0, hspace =0)#调整子图间距
+
+
+
         # ax1.axis('off')
         if save_path:
             if os.path.exists(f'./figure/{save_path}'):
@@ -214,43 +247,57 @@ def show_qua_weight(path,indexes=[0,-1], is_all = True,save_path=None):
 
 
 
-path = '/data/zhicai/ckpts/Mgmlp/train/20211009-113958-nest_gmlp_s-224/checkpoint-50.pth.tar'
-# show_weight(path,is_all = True, save_path='gmlp_s')
+
+
+
+def show_pos(path):
+    ckpt = torch.load(path,map_location='cpu')
+    a = [[],[],[]]
+    for i,v in ckpt['state_dict_ema'].items():
+        if 'window_lamb' in i :
+            a[0].append((i,v))
+        elif 'block_lamb' in i :
+            a[1].append((i,v))       
+        elif 'split_lamb' in i :
+            a[2].append((i,v))
+    for i in a:
+        print('\n')
+        for j in i:
+            print(j)
+                # break
+def show_pos(path):
+    ckpt = torch.load(path,map_location='cpu')
+    a = [[],[],[]]
+    for i,v in ckpt['state_dict_ema'].items():
+        if '' in i :
+            a[0].append((i,v))
+        elif 'block_lamb' in i :
+            a[1].append((i,v))       
+        elif 'split_lamb' in i :
+            a[2].append((i,v))
+    for i in a:
+        print('\n')
+        for j in i:
+            print(j)
+                # break
+
+
+
+
+
+path ='/data/zhicai/ckpts/Mgmlp/train/20211007-002221-nest_gmlp_s-224_quaonly_split24_82.0_full/checkpoint-303.pth.tar'
+show_qua_weight(path,for_weight= True,save_path='gmlp_s_3_stage_82.0_weight_quaposonly_all_s20_bias')
+# show_para(path)
+
 # summary_list=['/data/zhicai/ckpts/Mgmlp/train/20210924-223448-nest_gmlp_s-224/summary.csv',
 # '/home/zhicai/Mglp/output/train/20210923-105647-nest_scgmlp_s-224/summary.csv']
 # name_list = ['nest_gmlp_s_conv_pos',
 # 'nest_gmlp_s_pos']
 # draw_acc(summary_list,name_list)
-show_para(path)
-# show_weight(path, save_path='gmlp_s_pos_all(wight_and_posBias)')
-
-# 
 
 
 
-
-# from models.nest_gmlp import QuaMap,LearnedPosMap
-# import torch
-
-# gamma = 24
-
-# model = QuaMap(dim=96,seq_len=196,blocks=16,gamma=gamma)
-# model_2 = LearnedPosMap(dim=96,seq_len=196,blocks=16,gamma=gamma)
-
-
-# from fvcore.nn import FlopCountAnalysis, parameter_count_table
-
-# # 创建resnet50网络
-# # 创建输入网络的tensor
-# tensor = (torch.randn([1,16,196,96]))
-
-# # 分析FLOPs
-# flops = FlopCountAnalysis(model, tensor)
-# flops_2 = FlopCountAnalysis(model_2, tensor)
-# print("FLOPs: ", flops.total())
-# # 分析parameters
-# print(parameter_count_table(model))
-
-# print("FLOPs: ", flops_2.total())
-# # 分析parameters
-# print(parameter_count_table(model_2))
+# path = '/data/zhicai/ckpts/Mgmlp/train/20211005-052150-nest_gmlp_s-224/checkpoint-129.pth.tar'
+# show_weight(path, save_path='gmlp_s_learpos_all_(wight_and_posBias)')
+# show_qua_weight(path,save_path='gmlp_s_quaposonly_all')
+# show_para(path)

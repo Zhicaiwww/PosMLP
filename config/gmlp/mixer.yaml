@@ -13,11 +13,11 @@ class_ratio : 1
 clip_grad: 1.0
 clip_mode: norm
 color_jitter: 0.4
-cooldown_epochs: 10
+cooldown_epochs: 5
 crop_pct: 0.9
 cutmix: 1.0
 cutmix_minmax: null
-data: "/home/zhicai/ImageNet2012"
+data: "/data1/datasets/ImageNet2012"
 dataset: ""
 decay_epochs: 1.0
 decay_rate: 0.988
@@ -40,7 +40,7 @@ jsd: false
 local_rank: 0
 log_interval: 50
 log_wandb: false
-lr: 0.0016
+lr: 0.0008
 lr_cycle_limit: 1
 lr_cycle_mul: 1.0
 lr_noise: null
@@ -53,14 +53,8 @@ mixup_mode: batch
 mixup_off_epoch: 0
 mixup_prob: 1.0
 mixup_switch_prob: 0.5
-model: nest_gmlp_s
+model: mixer_s16_224
 model_hyper:
-  stem_name : 'Nest_ConvolutionalEmbed'  # Nest_ConvolutionalEmbed or PatchEmbed
-  quadratic : True
-  # gamma: 16
-  generalized: True
-  pos_only : True
-  chunks : 2
 model_ema: true
 model_ema_decay: 0.99992
 model_ema_force_cpu: false
@@ -106,7 +100,7 @@ use_multi_epochs_loader: false
 val_split: validation
 validation_batch_size_multiplier: 1
 vflip: 0.0
-warmup_epochs: 10
+warmup_epochs: 5
 warmup_lr: 1.0e-05
 weight_decay: 0.067
 workers: 4

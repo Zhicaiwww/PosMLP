@@ -15,15 +15,17 @@ models.list_models()
 warnings.filterwarnings('ignore')
 # input=torch.randn([1,3,224,224])
 kwargs={
-        'stem_name' :'Nest_ConvolutionalEmbed_2',# 'PatchEmbed' ,#'Nest_ConvolutionalEmbed',#'Nest_ConvolutionalEmbed'
+        'stem_name' :'Nest_ConvolutionalEmbed',# 'PatchEmbed' ,#'Nest_ConvolutionalEmbed',#'Nest_ConvolutionalEmbed'
         'quadratic' : True,
         'pos_only': True,
         'gamma': 16,
         'channel_split': 24,
-        'generalized': True
+        'generalized': True,
+        'img_size':(768,1280),
+        'num_blocks':(256,64,16,4)
 
   }
-model = models.nest_gmlp_s4_p2(**kwargs)
+model = models.nest_gmlp_s_b4(**kwargs)
 
 
 if args.type == 'ptflops':
@@ -54,7 +56,7 @@ else:
 
     # 创建resnet50网络
     # 创建输入网络的tensor
-    tensor = (torch.rand(1, 3, 224, 224),)
+    tensor = (torch.rand(1, 3, 768,1280),)
     for name,parameters in model.named_parameters():
         print(name,':',parameters.size())
     # 分析FLOPs

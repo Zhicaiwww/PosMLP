@@ -61,7 +61,7 @@ def show_weight(path,indexes=[0,-1],is_all = True,save_path=None):
         if "token_proj_n_bias" in k :
             to_kb.append(k)
             to_vb.append(v.squeeze())
-        if 'gate_unit.window_relative_position_bias_table' in k:
+        if 'gate_unit.relative_position_bias_table' in k:
             to_kp.append(k)
             to_vp.append(v.squeeze(0))
         if 'relative_position_index' in k:
@@ -78,18 +78,27 @@ def show_weight(path,indexes=[0,-1],is_all = True,save_path=None):
     for idx in idxs:
         fig = plt.figure(figsize=(16, 16),tight_layout=True)
         ax = fig.add_subplot(2,2,1)
-        ax.imshow(bias_map[idx])
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.imshow(to_vw[idx])
         ax = fig.add_subplot(2,2,2)
+        ax.set_xticks([])
+        ax.set_yticks([])
         ax.imshow(bias_map[idx])
         ax = fig.add_subplot(2,2,3)
-        ax.imshow(bias_map[idx])
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.imshow(to_vw[idx]+bias_map[idx])
+        
         ax = fig.add_subplot(2,2,4)
-        # ax.plot(to_vw[idx][50],color = color_list[0],label='vw')
-        ax.plot(bias_map[idx][50],color = color_list[1],label='vb')
-        # ax.plot(to_vw[idx][50]+bias_map[idx][50],color = color_list[2],label='vw+vb')
+        ax.plot(to_vw[idx][50],color = color_list[0],label='SM')
+        ax.plot(bias_map[idx][50],color = color_list[1],label='RPE')
+        ax.plot(to_vw[idx][50]+bias_map[idx][50],color = color_list[2],label='SM+RPE')
         ax.set_ylabel('score')
         ax.set_xlabel('N')
-        ax.legend()
+        ax.legend(loc="upper right")
+        fig.tight_layout()#调整整体空白
+        plt.subplots_adjust(wspace =0, hspace =0)
         # ax1.axis('off')
         if save_path:
             if os.path.exists(f'./figure/{save_path}'):
@@ -97,31 +106,24 @@ def show_weight(path,indexes=[0,-1],is_all = True,save_path=None):
             else :
                 os.makedirs(f'./figure/{save_path}')
 
-            fig.savefig(f'./figure/{save_path}/save_img_{idx}.jpg', facecolor='grey', edgecolor='red')
+            fig.savefig(f'./figure/{save_path}/save_img_{idx}.pdf', edgecolor='red')
             plt.close()
         else:
             plt.show()
 
 def show_para(path):
-    ckpt = torch.load(path)
+    ckpt = torch.load(path,map_location='cpu')
     for i,v in ckpt['state_dict_ema'].items():
         print(f"{i}： {v.size()}")
 
 
 def show_pos(path):
     ckpt = torch.load(path,map_location='cpu')
-    a = [[],[],[]]
+    a = []
     for i,v in ckpt['state_dict_ema'].items():
         if 'window_lamb' in i :
-            a[0].append((i,v))
-        elif 'block_lamb' in i :
-            a[1].append((i,v))       
-        elif 'split_lamb' in i :
-            a[2].append((i,v))
-    for i in a:
-        print('\n')
-        for j in i:
-            print(j)
+            a.append(v)
+    print(torch.cat(a,dim=0))
                 # break
 
 def to_qua_att_map(rel_indices,attention_centers,attention_spreads):
@@ -214,15 +216,13 @@ def show_qua_weight(path,indexes=[0,-1], is_all = True,save_path=None):
 
 
 
-path = '/data/zhicai/ckpts/Mgmlp/train/20211010-120103-nest_gmlp_s-224/checkpoint-125.pth.tar'
-# show_weight(path,is_all = True, save_path='gmlp_s')
+
 # summary_list=['/data/zhicai/ckpts/Mgmlp/train/20210924-223448-nest_gmlp_s-224/summary.csv',
 # '/home/zhicai/Mglp/output/train/20210923-105647-nest_scgmlp_s-224/summary.csv']
 # name_list = ['nest_gmlp_s_conv_pos',
 # 'nest_gmlp_s_pos']
 # draw_acc(summary_list,name_list)
 import torch
-path = '/data/zhicai/ckpts/Mgmlp/train/20211010-120103-nest_gmlp_s-224_qua_ga32_77.02/model_best.pth.tar'
 # show_weight(path,is_all = True, save_path='gmlp_s')
 # summary_list=['/data/zhicai/ckpts/Mgmlp/train/20210924-223448-nest_gmlp_s-224/summary.csv',
 # '/home/zhicai/Mglp/output/train/20210923-105647-nest_scgmlp_s-224/summary.csv']
@@ -249,12 +249,12 @@ def show_center(path):
         ca.append(c[1].view(b,-1,2))
         sa.append(s[1].view(b,-1,2,2))      
     return ca,sa
-c,s = show_center(path)
-show_center(path)
+# c,s = show_center(path)
+# show_center(path)
 # show_weight(path, save_path='gmlp_s_pos_all(wight_and_posBias)')
 
-# 
-
+path = '/data/zhicai/ckpts/Mgmlp/train/20210923-125519-nest_gmlp_s_learn+SM_patchM_76.8/checkpoint-126.pth.tar'
+show_weight(path,save_path="SM+RPE")
 
 
 
@@ -262,24 +262,3 @@ show_center(path)
 # import torch
 
 # gamma = 24
-
-# model = QuaMap(dim=96,seq_len=196,blocks=16,gamma=gamma)
-# model_2 = LearnedPosMap(dim=96,seq_len=196,blocks=16,gamma=gamma)
-
-
-# from fvcore.nn import FlopCountAnalysis, parameter_count_table
-
-# # 创建resnet50网络
-# # 创建输入网络的tensor
-# tensor = (torch.randn([1,16,196,96]))
-
-# # 分析FLOPs
-# flops = FlopCountAnalysis(model, tensor)
-# flops_2 = FlopCountAnalysis(model_2, tensor)
-# print("FLOPs: ", flops.total())
-# # 分析parameters
-# print(parameter_count_table(model))
-
-# print("FLOPs: ", flops_2.total())
-# # 分析parameters
-# print(parameter_count_table(model_2))

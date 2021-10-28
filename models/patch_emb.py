@@ -45,7 +45,6 @@ class ConvolutionalEmbed(nn.Module):
     """
     def __init__(self, img_size=224, patch_size=16, in_chans=3, embed_dim=768, norm_layer=partial(nn.BatchNorm2d, eps=1e-6), flatten=True,**kwargs):
         super().__init__()
-        img_size = to_2tuple(img_size)
         patch_size = to_2tuple(patch_size)
         self.img_size = img_size
         self.patch_size = patch_size
@@ -83,7 +82,6 @@ class Nest_ConvolutionalEmbed(nn.Module):
         super().__init__()
 
         norm_layer=partial(nn.BatchNorm2d, eps=1e-6)
-        img_size = to_2tuple(img_size)
         patch_size = to_2tuple(patch_size)
         self.img_size = img_size
         self.patch_size = patch_size
@@ -102,14 +100,13 @@ class Nest_ConvolutionalEmbed(nn.Module):
 
     def forward(self, x):
         B, C, H, W = x.shape
-        assert H == self.img_size[0] and W == self.img_size[1], \
-            f"Input image size ({H}*{W}) doesn't match model ({self.img_size[0]}*{self.img_size[1]})."
+        # assert H == self.img_size[0] and W == self.img_size[1], \
+        #     f"Input image size ({H}*{W}) doesn't match model ({self.img_size[0]}*{self.img_size[1]})."
         for i ,(proj, norm) in enumerate(zip(self.projs,self.norms)):
             x = proj(x)
             x = norm(x)
-
+            # print(x.size())
             if i == len(self.kernels)-1:
-                x = x.transpose(2, 3)  # BCHW -> BNC
                 break
             x = self.act(x)
         return x
@@ -147,7 +144,6 @@ class Nest_ConvolutionalEmbed_2(nn.Module):
             x = norm(x)
 
             if i == len(self.kernels)-1:
-                x = x.transpose(2, 3)  # BCHW -> BNC
                 break
             x = self.act(x)
         return x

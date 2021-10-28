@@ -466,8 +466,8 @@ def blockify(x, win_size: int):
         win_size (int): edge length of a single square block in units of H, W
     """
     B, H, W, C  = x.shape
-    # print(x.size())
-    # print(win_size)
+    assert H % win_size[0] == 0, '`win_size` must divide input height evenly'
+    assert W % win_size[1] == 0, '`win_size` must divide input width evenly'
     grid_height = H // win_size[0]
     grid_width = W // win_size[1]
     x = x.reshape(B, grid_height, win_size[0], grid_width, win_size[1], C)
@@ -523,7 +523,6 @@ class NestLevel(nn.Module):
         expects x as (B, C, H, W)
         """
         x = self.pool(x)
-        # print(x.size())
         x = x.permute(0, 2, 3, 1)  # (B, H', W', C), switch to channels last for transformer
         x = blockify(x, self.win_size)  # (B, T, N, C')
         # print(x.size(),self.pos_embed.size())
@@ -540,38 +539,12 @@ class Nest(nn.Module):
         - https://arxiv.org/abs/2105.12723
     """
 
-    def __init__(self, img_size=(224,224), in_chans=3, patch_size=4, num_levels=3, embed_dims=(96,192,384),num_blocks=(16,4,1),
+    def __init__(self, img_size=(224,224), in_chans=3, patch_size=4, num_levels=3, embed_dims=(96,192,384,768),num_blocks=(16,4,1,1),
                   depths=(2, 2, 20), num_classes=1000, mlp_ratio=(4,4,4), gate_unit=SGatingUnit,gate_layer=GmlpLayer,
                  drop_rate=0.,  drop_path_rate=0.5, norm_layer=partial(nn.LayerNorm, eps=1e-6), act_layer=nn.GELU,
                  pad_type='', weight_init='', global_pool='avg',stem_name = "PatchEmbed",**kwargs):
-        """
-        Args:
-            img_size (int, tuple): input image size
-            in_chans (int): number of input channels
-            patch_size (int): patch size
-            num_levels (int): number of block hierarchies (T_d in the paper)
-            embed_dims (int, tuple): embedding dimensions of each level
-            depths (int, tuple): number of transformer layers for each level
-            num_classes (int): number of classes for classification head
-            mlp_ratio (int): ratio of mlp hidden dim to embedding dim for MLP of transformer layers
-            drop_rate (float): dropout rate for MLP of transformer layers, MSA final projection layer, and classifier
-            attn_drop_rate (float): attention dropout rate
-            drop_path_rate (float): stochastic depth rate
-            norm_layer: (nn.Module): normalization layer for transformer layers
-            act_layer: (nn.Module): activation layer in MLP of transformer layers
-            pad_type: str: Type of padding to use '' for PyTorch symmetric, 'same' for TF SAME
-            weight_init: (str): weight init scheme
-            global_pool: (str): type of pooling operation to apply to final feature map
-            
-            optional(SCguit):
-            gamma= 16, 
-            splat = True,
-        Notes:
-            - Default values follow NesT-B from the original Jax code.
-            - `embed_dims`, `num_heads`, `depths` should be ints or tuples with length `num_levels`.
-            - For those following the paper, Table A1 may have errors!
-                - https://github.com/google-research/nested-transformer/issues/2
-        """
+
+
         super().__init__()
 
         for param_name in ['embed_dims', 'depths']:
@@ -712,99 +685,19 @@ def _create_nest(variant, pretrained=False, default_cfg=None, **kwargs):
 
 
 @register_model
-def nest_gmlp_l(pretrained=False, **kwargs):
-    """ Nest-B @ 224x224
-    """
-    model_kwargs = dict(
-        embed_dims=(192, 384, 768), depths=(2, 2, 20),chunks=2, mlp_ratio=(4,4,4),**kwargs)
-    model = _create_nest('nest_gmlp_b', pretrained=pretrained, **model_kwargs)
-    return model
-
-@register_model
-def nest_gmlp_b(pretrained=False, **kwargs):
-    """ Nest-B @ 224x224
-    """
-    model_kwargs = dict(
-        embed_dims=(128, 256, 512), depths=(2, 2, 20),chunks=2,mlp_ratio=(4,4,4), **kwargs)
-    model = _create_nest('nest_gmlp_b', pretrained=pretrained, **model_kwargs)
-    return model
-
-
-@register_model
 def nest_gmlp_s(pretrained=False, **kwargs):
     """ Nest-S @ 224x224
     """
-    model_kwargs = dict(embed_dims=(96, 192, 384),  depths=(2, 2, 20),mlp_ratio=(4,4,4),num_levels=3,**kwargs)
-    model = _create_nest('nest_gmlp_s', pretrained=pretrained, **model_kwargs)
-    return model
-
-
-@register_model
-def nest_gmlp_s_b5(pretrained=False, **kwargs):
-    """ Nest-S @ 224x224
-    """
-    model_kwargs = dict(embed_dims=(96, 192, 384,768),  depths=(2, 2, 18,2),mlp_ratio=(4,4,4,2),num_levels=4,num_blocks=(16,4,1,1),**kwargs)
+    model_kwargs = dict(embed_dims=(96, 192, 384),  depths=(2, 2, 20),mlp_ratio=(4,4,4),**kwargs)
     model = _create_nest('nest_gmlp_s', pretrained=pretrained, **model_kwargs)
     return model
 
 @register_model
-def nest_gmlp_s_b4(pretrained=False, **kwargs):
+def nest_gmlp_s_det(pretrained=False, **kwargs):
     """ Nest-S @ 224x224
     """
-    model_kwargs = dict(embed_dims=(96, 192, 384,768),  depths=(2, 2, 18,2),mlp_ratio=(4,4,4,2),num_levels=4,**kwargs)
+    model_kwargs = dict(embed_dims=(96, 192, 384,768),  depths=(2, 2, 18,2),mlp_ratio=(4,4,4,2),num_levels=4,num_blocks=(64,4,1,1),**kwargs)
     model = _create_nest('nest_gmlp_s', pretrained=pretrained, **model_kwargs)
     return model
-
-
-@register_model
-def nest_gmlp_s_v2(pretrained=False, **kwargs):
-    """ Nest-S @ 224x224
-    """
-    model_kwargs = dict(embed_dims=(96, 192, 384),  depths=(2, 2, 20),chunks=1,gate_layer=GmlpLayer_2,mlp_ratio=3,**kwargs)
-    model = _create_nest('nest_gmlp_s', pretrained=pretrained, **model_kwargs)
-    return model
-
-
-@register_model
-def nest_gmlp_s_v3(pretrained=False, **kwargs):
-    """ Nest-S @ 224x224
-    """
-    model_kwargs = dict(embed_dims=(96, 192, 384),  depths=(2, 2, 20),chunks=1,gate_layer=MixerLayer,mlp_ratio=4,**kwargs)
-    model = _create_nest('nest_gmlp_s', pretrained=pretrained, **model_kwargs)
-    return model
-@register_model
-def nest_gmlp_s_v4(pretrained=False, **kwargs):
-    """ Nest-S @ 224x224
-    """
-    model_kwargs = dict(embed_dims=(96, 192, 384),  depths=(2, 2, 20),chunks=1,gate_layer=MixerLayer_2,mlp_ratio=4,**kwargs)
-    model = _create_nest('nest_gmlp_s', pretrained=pretrained, **model_kwargs)
-    return model
-
-
-@register_model
-def nest_gmlp_s4_p2(pretrained=False, **kwargs):
-    """ Nest-S @ 224x224
-    """
-    model_kwargs = dict(embed_dims=(48, 96, 192, 384),  depths=(2, 2, 4, 16),mlp_ratio=(2,4,4,4),num_levels=4,chunks=2,patch_size=2,**kwargs)
-    model = _create_nest('nest_gmlp_s4', pretrained=pretrained, **model_kwargs)
-    return model
-
-
-@register_model
-def nest_gmlp_b4(pretrained=False, **kwargs):
-    """ Nest-S @ 224x224
-    """
-    model_kwargs = dict(embed_dims=(64, 128, 256, 512),  depths=(2, 2, 2, 16),num_levels=4,chunks=2,patch_size=2,**kwargs)
-    model = _create_nest('nest_gmlp_s4', pretrained=pretrained, **model_kwargs)
-    return model
-
-@register_model
-def nest_gmlp_t(pretrained=False, **kwargs):
-    """ Nest-T @ 224x224
-    """
-    model_kwargs = dict(embed_dims=(96, 192, 384), depths=(2, 2, 8), **kwargs)
-    model = _create_nest('nest_gmlp_t', pretrained=pretrained, **model_kwargs)
-    return model
-
 
 

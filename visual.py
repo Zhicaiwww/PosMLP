@@ -61,7 +61,7 @@ def show_weight(path,indexes=[0,-1],is_all = True,save_path=None):
         if "token_proj_n_bias" in k :
             to_kb.append(k)
             to_vb.append(v.squeeze(-1))
-        if 'gate_unit.window_relative_position_bias_table' in k:
+        if 'gate_unit.relative_position_bias_table' in k:
             to_kp.append(k)
             to_vp.append(v.squeeze(0))
         if 'relative_position_index' in k:
@@ -78,42 +78,73 @@ def show_weight(path,indexes=[0,-1],is_all = True,save_path=None):
     for idx in idxs:
         fig = plt.figure(figsize=(16, 16),tight_layout=True)
         ax = fig.add_subplot(2,2,1)
-        ax.imshow(bias_map[idx])
+        ax.imshow(to_vw[idx])
+        ax.axis('off')
         ax = fig.add_subplot(2,2,2)
-        ax.plot(to_vb[idx][0])
-        ax = fig.add_subplot(2,2,3)
         ax.imshow(bias_map[idx])
+        ax.axis('off')
+        ax = fig.add_subplot(2,2,3)
+        ax.imshow(bias_map[idx]+to_vw[idx])
+        ax.axis('off')
         ax = fig.add_subplot(2,2,4)
-        # ax.plot(to_vw[idx][50],color = color_list[0],label='vw')
-        ax.plot(bias_map[idx][50],color = color_list[1],label='vb')
-        # ax.plot(to_vw[idx][50]+bias_map[idx][50],color = color_list[2],label='vw+vb')
+        ax.plot(to_vw[idx][50],color = color_list[0],label='TokenFC')
+        ax.plot(bias_map[idx][50],color = color_list[1],label='LRPE')
+        ax.plot(to_vw[idx][50]+bias_map[idx][50],color = color_list[2],label='TokenFC+LRPE')
         ax.set_ylabel('score')
         ax.set_xlabel('N')
-        ax.legend()
-        # ax1.axis('off')
+        ax.legend(fontsize=16,loc='lower right')
+        # ax.axis('off')
         if save_path:
             if os.path.exists(f'./figure/{save_path}'):
                 pass
             else :
                 os.makedirs(f'./figure/{save_path}')
 
-            fig.savefig(f'./figure/{save_path}/save_img_{idx}.jpg', facecolor='grey', edgecolor='red')
+            fig.savefig(f'./figure/{save_path}/save_img_{idx}.pdf',  edgecolor='red')
             plt.close()
         else:
             plt.show()
 
 
-def show_para(path):
+def show_bias(path,indexes=[0,-1],is_all = True,save_path=None):
     ckpt = torch.load(path,map_location='cpu')
-    for i,v in ckpt['state_dict_ema'].items():
-        print(f"{i}： {v.size()}")
+    to_kidx=[]
+    to_vidx=[]
+    import math
+
+    for k,v in ckpt['state_dict_ema'].items():
+        if 'token_proj_n_bias' in k:
+            to_kidx.append(k)
+            to_vidx.append(v.cpu())
+    print(f"number of figures is {len(to_vidx)}")
+    idxs = range(len(to_vidx)) if is_all else indexes
+    fig = plt.figure(figsize=(12,8),tight_layout=True)
+    for idx in idxs:
+        ax = fig.add_subplot(4,6,idx+1)
+        bias = to_vidx[idx].squeeze()
+        size = bias.size(0)
+        h = int(math.sqrt(size))
+        bias= bias.view(h,h)
+        ax.imshow(bias)
+        ax.set_xticks([])
+        ax.set_yticks([])
+        # plt.legend(fontsize=16,loc='lower right')
+        ax.axis('off')          
+    fig.tight_layout()#调整整体空白
+    # fig.tight_layout()#调整整体空白
+    plt.subplots_adjust(wspace=-0.6, hspace=-0.6)#调整子图间距
+    save_fig(save_path,fig,'all')
 
 
-
-def to_qua_att_map(rel_indices,attention_centers,attention_spreads,levels=[2,2,20],idx=0,for_weight=True,pixel_idx=50):
+def show_key(path):
+    ckpt = torch.load(path,map_location='cpu')
+    for i,v in ckpt.items():
+        print(f"{i}")
+def to_qua_att_map(rel_indices,attention_centers,attention_spreads,levels=[2,2,18,2],idx=0,for_weight=True,pixel_idx=100):
 
     mu_1, mu_2 = attention_centers[:, 0], attention_centers[:, 1]
     inv_covariance = torch.einsum('hij,hkj->hik', [attention_spreads, attention_spreads])
+    # inv_covariance = attention_spreads
     a, b, c = inv_covariance[:, 0, 0], inv_covariance[:, 0, 1], inv_covariance[:, 1, 1]
     # b,5
     pos_proj =-1/2 * torch.stack([
@@ -124,25 +155,28 @@ def to_qua_att_map(rel_indices,attention_centers,attention_spreads,levels=[2,2,2
         2 * b
     ], dim=-1)
     pos_score = nn.Softmax(-1)(torch.einsum('mnd,bd->bmn',rel_indices,pos_proj))
-
+    if  idx < levels[0]+levels[1]+levels[2]:
+        pass
+    else:
+        pixel_idx = 24
     import math
     bs,m,n=pos_score.size()
     h = int(math.sqrt(n))
-    if idx < levels[0]:
-        blocks = 16
-    elif idx < levels[0]+levels[1]:
-        blocks= 4
-    else:
-        blocks= 1
+    # if idx < levels[0]:
+    #     blocks = 16
+    # elif idx < levels[0]+levels[1]:
+    #     blocks= 4
+    # else:
+    blocks= 1
     s = bs//blocks
     if for_weight:
         return pos_score.view(blocks,s,m,n)
     else:
-        pos_score=pos_score.view(blocks,s,m,h,h)[:,:,pixel_idx] + 1
+        pos_score=pos_score.view(blocks,s,m,h,h)[:,:,pixel_idx] 
     # bs m n 
     return pos_score
     
-def show_qua_weight(path,indexes=[0,-1], is_all = True,for_weight=False,levels=[2,2,20],save_path=None):
+def show_qua_weight(path,indexes=[0,-1], select=None,is_all = True,for_weight=False,levels=[2,2,18,2],save_path=None):
     ckpt = torch.load(path,map_location='cpu')
     to_kw=[]
     to_vw=[]
@@ -156,7 +190,7 @@ def show_qua_weight(path,indexes=[0,-1], is_all = True,for_weight=False,levels=[
     to_vrcs=[]
 
 
-    for k,v in ckpt['state_dict_ema'].items():
+    for k,v in ckpt['state_dict'].items():
         if "token_proj_n_weight" in k:
             to_kw.append(k)
             to_vw.append(v.squeeze())
@@ -180,8 +214,31 @@ def show_qua_weight(path,indexes=[0,-1], is_all = True,for_weight=False,levels=[
             bias_map.append(to_qua_att_map(vri,vrct,vrcs,levels,idx,for_weight=for_weight,))
     idxs = range(len(to_kb)) if is_all else indexes
 
+
+
+    if select:
+            fig = plt.figure(figsize=(2*select,2*len(idxs)),tight_layout=True)
+            
+            cnt = 1
+            for cos,idx in enumerate(idxs):
+                #bsmn
+                layer_atts=bias_map[idx]
+                for i in range(select):
+                    ax = fig.add_subplot(len(idxs),select,cnt)
+                    # if for_weight:
+                    ax.imshow(layer_atts[0,cos+i])
+                    # else:
+                    #     ax.plot(layer_atts[0,i,50],color = color_list[1],label='vb')    
+                    ax.set_xticks([])
+                    ax.set_yticks([])
+
+                    cnt+=1
+            fig.tight_layout()#调整整体空白
+            plt.subplots_adjust(wspace =0, hspace =0)#调整子图间距
+            save_fig(save_path,fig,"select",type="pdf")
+            return 
+        
     for idx in idxs:
-        if for_weight:
             # fig = plt.figure(figsize=(16,16),tight_layout=True)
             # ax = fig.add_subplot(2,2,1)
             # ax.imshow(bias_map[idx])
@@ -195,104 +252,63 @@ def show_qua_weight(path,indexes=[0,-1], is_all = True,for_weight=False,levels=[
             # ax.set_xlabel('N')
             # ax.legend()
 
-            layer_atts=bias_map[idx]
-            b,s,m,n =layer_atts.size()
-            fig = plt.figure(figsize=(2*s,2*b),tight_layout=True)
-            
-            cnt = 1
-            for i in range(b):
-                for j in range(s):
-                    ax = fig.add_subplot(b,s,cnt)
-                    
+        layer_atts=bias_map[idx]
+        b,s,m,n =layer_atts.size()
+        fig = plt.figure(figsize=(2*s,2*b),tight_layout=True)
+        
+        cnt = 1
+        for i in range(b):
+            for j in range(s):
+                ax = fig.add_subplot(b,s,cnt)
+                if for_weight:
                     ax.plot(layer_atts[i,j,50],color = color_list[1],label='vb')
-                    ax.set_xticks([])
-                    ax.set_yticks([])
-
-                    cnt+=1
-            fig.tight_layout()#调整整体空白
-            plt.subplots_adjust(wspace =0, hspace =0)#调整子图间距
-        else:
-
-            layer_atts=bias_map[idx]
-            b,s,h,w =layer_atts.size()
-            fig = plt.figure(figsize=(2*s,2*b),tight_layout=True)
-            
-            cnt = 1
-            for i in range(b):
-                for j in range(s):
-                    ax = fig.add_subplot(b,s,cnt)
-                    
+                else:
                     ax.imshow(layer_atts[i,j])
-                    ax.set_xticks([])
-                    ax.set_yticks([])
+                ax.set_xticks([])
+                ax.set_yticks([])
 
-                    cnt+=1
-            fig.tight_layout()#调整整体空白
-            plt.subplots_adjust(wspace =0, hspace =0)#调整子图间距
-
-
-
-        # ax1.axis('off')
-        if save_path:
-            if os.path.exists(f'./figure/{save_path}'):
-                pass
-            else :
-                os.makedirs(f'./figure/{save_path}')
-
-            fig.savefig(f'./figure/{save_path}/save_img_{idx}.jpg', facecolor='grey', edgecolor='red')
-            plt.close()
-        else:
-            plt.show()
+                cnt+=1
+        fig.tight_layout()#调整整体空白
+        plt.subplots_adjust(wspace =0, hspace =0)#调整子图间距
+        save_fig(save_path,fig,idx)
 
 
 
+def save_fig(save_path,fig,idx,type='pdf'):
+    if os.path.exists(f'./figure/{save_path}'):
+        pass
+    else :
+        os.makedirs(f'./figure/{save_path}')
 
+    fig.savefig(f'./figure/{save_path}/save_img_{idx}.{type}', edgecolor='red')
+    plt.close()
 
+    
 
+def show_para(path):
+    ckpt = torch.load(path,map_location='cpu')
+    for i,v in ckpt['state_dict'].items():
+        print(f"{i}： {v.size()}")
 
 def show_pos(path):
     ckpt = torch.load(path,map_location='cpu')
-    a = [[],[],[]]
-    for i,v in ckpt['state_dict_ema'].items():
-        if 'window_lamb' in i :
-            a[0].append((i,v))
-        elif 'block_lamb' in i :
-            a[1].append((i,v))       
-        elif 'split_lamb' in i :
-            a[2].append((i,v))
-    for i in a:
-        print('\n')
-        for j in i:
-            print(j)
-                # break
-def show_pos(path):
-    ckpt = torch.load(path,map_location='cpu')
-    a = [[],[],[]]
-    for i,v in ckpt['state_dict_ema'].items():
-        if '' in i :
-            a[0].append((i,v))
-        elif 'block_lamb' in i :
-            a[1].append((i,v))       
-        elif 'split_lamb' in i :
-            a[2].append((i,v))
-    for i in a:
-        print('\n')
-        for j in i:
-            print(j)
-                # break
+    a =[]
+    for i,v in ckpt['state_dict'].items():
+        if 'lamb' in i :
+            a.append(v)
+ 
+    print(torch.cat(a,dim=0))
 
 
-
-
-
-path ='/data/zhicai/ckpts/Mgmlp/train/20211007-002221-nest_gmlp_s-224_quaonly_split24_82.0_full/checkpoint-303.pth.tar'
-show_qua_weight(path,for_weight= True,save_path='gmlp_s_3_stage_82.0_weight_quaposonly_all_s20_bias')
+# path ='/data/zhicai/ckpts/Mgmlp/train/20211122-011628-nest_gmlp_s_b4-224/checkpoint-110.pth.tar'
+# # show_qua_weight(path,indexes=[1,3,8,12,16,20,23],select=6,is_all=False,levels=[2,2,18,2],for_weight= False,save_path='nest_gmlp_s_b4_sym_ATT_81.6_7(1,3,8,12,16,20,22)')
+# # show_qua_weight(path)
 # show_para(path)
 
-# summary_list=['/data/zhicai/ckpts/Mgmlp/train/20210924-223448-nest_gmlp_s-224/summary.csv',
-# '/home/zhicai/Mglp/output/train/20210923-105647-nest_scgmlp_s-224/summary.csv']
-# name_list = ['nest_gmlp_s_conv_pos',
-# 'nest_gmlp_s_pos']
+# summary_list=['/data/zhicai/ckpts/Mgmlp/train/20211008-121343-gmlp_s16_224-224_74.0/GQPEsummary.csv',
+# '/data/zhicai/ckpts/Mgmlp/train/20211008-121343-gmlp_s16_224-224_74.0/summary.csv']
+# name_list = ['gmlp_s_GQPE',
+# 'gmlp_s']
 # draw_acc(summary_list,name_list)
 
 
@@ -300,4 +316,21 @@ show_qua_weight(path,for_weight= True,save_path='gmlp_s_3_stage_82.0_weight_quap
 # path = '/data/zhicai/ckpts/Mgmlp/train/20211005-052150-nest_gmlp_s-224/checkpoint-129.pth.tar'
 # show_weight(path, save_path='gmlp_s_learpos_all_(wight_and_posBias)')
 # show_qua_weight(path,save_path='gmlp_s_quaposonly_all')
+# show_pos(path)
+# path = '/data/zhicai/ckpts/pretrain/checkpoint-126.pth_conv.tar'
 # show_para(path)
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("m",default=1,type=int)
+    parser.add_argument("ckpt",default=None,type=str)
+    parser.add_argument("-save",default='nest_gmlp_s_PM_bias_ATT_81.6_7(1,3,8,12,16,20,22)',type=str)
+    args = parser.parse_args()
+    path = args.ckpt
+    save_path = args.save
+    if args.m == 1:
+        show_para(path)
+    elif args.m == 2:
+        show_qua_weight(path,save_path=save_path)
+    elif args.m == 3:
+        show_bias(path,save_path=save_path)

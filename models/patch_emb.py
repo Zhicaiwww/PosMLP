@@ -43,7 +43,7 @@ class PatchEmbed(nn.Module):
 class ConvolutionalEmbed(nn.Module):
     """ 2D Image to Patch Embedding
     """
-    def __init__(self, img_size=224, patch_size=16, in_chans=3, embed_dim=768, norm_layer=partial(nn.BatchNorm2d, eps=1e-6), flatten=True,**kwargs):
+    def __init__(self, img_size=224, patch_size=16, in_chans=3, embed_dim=768, norm_layer=partial(nn.LayerNorm, eps=1e-6), flatten=True,**kwargs):
         super().__init__()
         img_size = to_2tuple(img_size)
         patch_size = to_2tuple(patch_size)
@@ -68,7 +68,7 @@ class ConvolutionalEmbed(nn.Module):
             f"Input image size ({H}*{W}) doesn't match model ({self.img_size[0]}*{self.img_size[1]})."
         for i ,(proj, norm) in enumerate(zip(self.projs,self.norms)):
             x = proj(x)
-            x = norm(x)
+            x = norm(x.transpose(0,2,3,1)).transpose(0,3,1,2)
 
             if i == len(self.kernels)-1:
                 x = x.flatten(2).transpose(1, 2)  # BCHW -> BNC
@@ -97,57 +97,63 @@ class Nest_ConvolutionalEmbed(nn.Module):
         self.pads = [1,1,0]
         self.projs = nn.Sequential(*[nn.Conv2d(in_chan, out_chan, kernel_size=kernel, stride=stride,padding=pad) for 
         in_chan, out_chan,kernel,stride,pad in zip(self.in_chans,self.out_chans,self.kernels,self.strides,self.pads)]) 
+        # self.norms = nn.Sequential(*[norm_layer(out_chan) for out_chan in self.out_chans])
         self.norms = nn.Sequential(*[norm_layer(out_chan) for out_chan in self.out_chans])
-        self.act = nn.ReLU()
+        self.act = nn.GELU()
 
     def forward(self, x):
         B, C, H, W = x.shape
+        # print(x[0,0,:10,:10])
         assert H == self.img_size[0] and W == self.img_size[1], \
             f"Input image size ({H}*{W}) doesn't match model ({self.img_size[0]}*{self.img_size[1]})."
-        for i ,(proj, norm) in enumerate(zip(self.projs,self.norms)):
+        for i ,proj in enumerate(self.projs):
             x = proj(x)
-            x = norm(x)
-
+            # x = norm(x)
+            x = self.norms[i](x)
             if i == len(self.kernels)-1:
-                x = x.transpose(2, 3)  # BCHW -> BNC
+                # print(self.norms[i].running_mean[:3])       
+                # print(self.norms[i].running_var[:3])
+                # x = x.transpose(1, 3)  
                 break
             x = self.act(x)
         return x
     
-class Nest_ConvolutionalEmbed_2(nn.Module):
-    """ 2D Image to Patch Embedding
-    """
-    def __init__(self, img_size=224, patch_size=2, in_chans=3, embed_dim=48, flatten=True,**kwargs):
-        super().__init__()
 
-        norm_layer=partial(nn.BatchNorm2d, eps=1e-6)
-        img_size = to_2tuple(img_size)
-        patch_size = to_2tuple(patch_size)
-        self.img_size = img_size
-        self.patch_size = patch_size
-        self.grid_size = (img_size[0] // patch_size[0], img_size[1] // patch_size[1])
-        self.num_patches = self.grid_size[0] * self.grid_size[1]
-        self.flatten = flatten
-        self.in_chans=[in_chans,embed_dim]
-        self.out_chans = [embed_dim,embed_dim]
-        self.strides=[2,1]
-        self.kernels=[3,1]
-        self.pads = [1,0]
-        self.projs = nn.Sequential(*[nn.Conv2d(in_chan, out_chan, kernel_size=kernel, stride=stride,padding=pad) for 
-        in_chan, out_chan,kernel,stride,pad in zip(self.in_chans,self.out_chans,self.kernels,self.strides,self.pads)]) 
-        self.norms = nn.Sequential(*[norm_layer(out_chan) for out_chan in self.out_chans])
-        self.act = nn.ReLU()
 
-    def forward(self, x):
-        B, C, H, W = x.shape
-        assert H == self.img_size[0] and W == self.img_size[1], \
-            f"Input image size ({H}*{W}) doesn't match model ({self.img_size[0]}*{self.img_size[1]})."
-        for i ,(proj, norm) in enumerate(zip(self.projs,self.norms)):
-            x = proj(x)
-            x = norm(x)
+# class Nest_ConvolutionalEmbed(nn.Module):
+#     """ 2D Image to Patch Embedding
+#     """
+#     def __init__(self, img_size=224, patch_size=4, in_chans=3, embed_dim=96, flatten=True,**kwargs):
+#         super().__init__()
+#         norm_layer=partial(nn.LayerNorm, eps=1e-6)
+#         img_size = to_2tuple(img_size)
+#         patch_size = to_2tuple(patch_size)
+#         self.img_size = img_size
+#         self.patch_size = patch_size
+#         self.grid_size = (img_size[0] // patch_size[0], img_size[1] // patch_size[1])
+#         self.num_patches = self.grid_size[0] * self.grid_size[1]
+#         self.flatten = flatten
+#         self.in_chans=[in_chans,embed_dim//2,embed_dim]
+#         self.out_chans = [embed_dim//2,embed_dim,embed_dim]
+#         self.strides=[2,2,1]
+#         self.kernels=[3,3,1]
+#         self.pads = [1,1,0]
+#         self.projs = nn.Sequential(*[nn.Conv2d(in_chan, out_chan, kernel_size=kernel, groups = 1,stride=stride,padding=pad) for 
+#         in_chan, out_chan,kernel,stride,pad in zip(self.in_chans,self.out_chans,self.kernels,self.strides,self.pads)]) 
+#         self.norms = norm_layer(embed_dim)
+#         # self.norm = norm_layer(embed_dim)
+#         self.act = nn.GELU()
 
-            if i == len(self.kernels)-1:
-                x = x.transpose(2, 3)  # BCHW -> BNC
-                break
-            x = self.act(x)
-        return x
+#     def forward(self, x):
+#         B, C, H, W = x.shape
+#         assert H == self.img_size[0] and W == self.img_size[1], \
+#             f"Input image size ({H}*{W}) doesn't match model ({self.img_size[0]}*{self.img_size[1]})."
+#         for i ,proj in enumerate(self.projs):
+#             x = proj(x)
+#             #x = norm(x)
+#             # x = self.norms[i](x)
+#             if i == len(self.kernels)-1:
+#                 x=self.norms(x.permute(0,2,3,1)).permute(0,3,1,2)
+#                 break
+#             x = self.act(x)
+#         return x

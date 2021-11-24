@@ -19,10 +19,9 @@ import torch.nn as nn
 import torchvision.utils
 from torch.nn.parallel import DistributedDataParallel as NativeDDP
 
-from models import create_model
 from datasets import create_dataset
 from timm.data import create_loader, resolve_data_config, Mixup, FastCollateMixup, AugMixDataset
-from timm.models import load_checkpoint, resume_checkpoint, convert_splitbn_model
+from timm.models import load_checkpoint, resume_checkpoint, convert_splitbn_model,create_model
 from timm.utils import *
 from timm.loss import LabelSmoothingCrossEntropy, SoftTargetCrossEntropy, JsdCrossEntropy
 from timm.optim import create_optimizer
@@ -111,7 +110,6 @@ def main():
 
     model = create_model(
         args.model,
-        pretrained=args.pretrained,
         num_classes=args.num_classes,
         drop_rate=args.drop,
         drop_connect_rate=args.drop_connect,  # DEPRECATED, use drop_path

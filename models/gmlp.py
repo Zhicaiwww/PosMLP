@@ -35,113 +35,116 @@ default_cfgs = dict(
     Mgmlp_s16_224=_cfg(),
 )
 
-        
-class SGatingUnit(nn.Module):
-    
-    def __init__(self, dim, seq_len,chunks=2, norm_layer=nn.LayerNorm,pos_emb=True,num_blocks=1,quadratic=True,blockwise=False,
-    blocksplit=False,channel_split=24,pos_only=True,**kwargs):
+class QuaMap(nn.Module):
+    def __init__(self,dim, win_size=(14,14), blocks=1,gamma=4, channel_split = None,use_softmax=True,att_std = 1e-2,generalized=True,absolute_bias=True,idx=1,**kwargs):
         super().__init__()
-        self.chunks = 2
-        self.wh =int(math.pow(seq_len,0.5))
-        self.pos=pos_emb
-        self.blocksplit=blocksplit if num_blocks>1 else False
-        self.blocks=num_blocks 
-        self.win_blocks=num_blocks if blockwise else 1
-        self.seq_len=seq_len
-        self.quadratic = quadratic
-        self.channel_split = 1
-        self.pos_only=pos_only
+        self.dim = dim
+        self.att_std = att_std 
+        self.win_size = win_size
+        self.seq_len = win_size[0]*win_size[1]
+        self.blocks = 1
+        self.idx = idx 
+        self.alpha = 1 / 10
+        # if idx < 2:
+        #     self.gamma = 8
+        # elif idx < 4 :
+        #     self.gamma = 16
+        # elif idx < 26 :
+        #     self.gamma = 32
+        # else:
+        #     self.gamma =64
+        self.gamma = 8
+        self.use_softmax = use_softmax
+        self.generalized = generalized
+        self.absolute_bias = absolute_bias
+        self.sft=nn.Softmax(-1) if use_softmax else nn.Identity()
+        if self.generalized:
+            self.get_general_quadratic_rel_indices(self.win_size,self.blocks,gamma=self.gamma)
+            self.forward_pos=self.forward_generalized_qua_pos
+        else: 
+            self.get_quadratic_rel_indices(self.win_size,self.blocks,gamma=self.gamma)
+            self.forward_pos=self.forward_qua_pos
+        # self.get_absolute_indices(self.win_size,self.blocks)
+        # # else:
+        self.token_proj_n_bias = nn.Parameter(torch.zeros(self.blocks, self.seq_len,1))
 
-        self.gate_dim = dim // chunks
-        self.pad_dim = dim % chunks # if cant divided by chunks, cut the residual term
-        # self.proj_list = nn.Sequential(*[nn.Linear(seq_len, seq_len) for i in range(chunks-1)])
-        self.token_proj_n_bias = nn.Parameter(torch.zeros(self.win_blocks, seq_len,1))
-        if self.pos:
-            if self.quadratic:
-                self.att_std = 1e-4
-                self.channel_split = self.gate_dim//channel_split
-                self.get_quadratic_rel_indices(self.seq_len,self.blocks,channel_split=self.channel_split)
-
-            else:
-                self.rel_locl_init(self.wh,self.win_blocks,register_name='window')
-                
-            if self.blocksplit:
-                self.rel_locl_init(int(math.pow(self.blocks,0.5)),1,register_name='block')
-                self.block_lamb=nn.Parameter(torch.Tensor([1]))
-                self.split_lamb=nn.Parameter(torch.Tensor([1]))
-                self.pool = nn.AvgPool2d
-                self.block_proj_n_weight = nn.Parameter(torch.zeros(1, self.blocks, self.blocks))
-                self.block_proj_n_bias = nn.Parameter(torch.zeros(1, self.blocks,1))
-                trunc_normal_(self.block_proj_n_weight,std=1e-6)
-            self.init_bias_table()
-
-        if not self.pos_only:
-            self.norm= norm_layer(self.gate_dim)
-            self.window_lamb=nn.Parameter(2*torch.ones(self.win_blocks))
-            self.sig = nn.Sigmoid()
-            self.token_proj_n_weight = nn.Parameter(torch.zeros(self.win_blocks, seq_len, seq_len))
-            trunc_normal_(self.token_proj_n_weight,std=1e-6)
-
-
-    def rel_locl_init(self,wh, num_blocks, register_name='window'):
-                                # define a parameter table of relative position bias
-        self.register_parameter(f'{register_name}_relative_position_bias_table' ,nn.Parameter(
-            torch.zeros((2 * wh - 1) * (2 * wh - 1), num_blocks)))  # 2*Wh-1 * 2*Ww-1, nH
-
-        # get pair-wise relative position index for each token inside the window
-        coords_h = torch.arange(wh)
-        coords_w = torch.arange(wh)
-        coords = torch.stack(torch.meshgrid([coords_h, coords_w]))  # 2, Wh, Ww
-        coords_flatten = torch.flatten(coords, 1)  # 2, Wh*Ww
-        relative_coords = coords_flatten.unsqueeze(2) - coords_flatten.unsqueeze(1)  # 2, Wh*Ww, Wh*Ww
-        relative_coords = relative_coords.permute(1, 2, 0).contiguous()  # Wh*Ww, Wh*Ww, 2
-        relative_coords[:, :, 0] += wh - 1  # shift to start from 0
-        relative_coords[:, :, 1] += wh - 1
-        relative_coords[:, :, 0] *= 2 * wh - 1
-
-        relative_position_index = relative_coords.sum(-1)  # Wh*Ww, Wh*Ww
-        self.register_buffer(f"{register_name}_relative_position_index", relative_position_index)
- 
-    def init_bias_table(self):
-        for k,v in self.named_modules():
-            if 'relative_position_bias_table' in k:
-                trunc_normal_(v.weight, std=.02) 
-
-    # def local_init(self,blocks):
-        
-
-        # self.attention_centers = nn.Parameter(
-        #     torch.zeros(1, 2).normal_(0.0, 1e-4)
-        # )
-        # self.pos_proj = torch.cat([-torch.ones([1,1]),self.attention_centers],dim=1)
-        # self.spread = 1+ nn.Parameter(torch.zeros(1).normal_(0.0, 1e-4))
-
-    def get_quadratic_rel_indices(self, num_patches,blocks,channel_split=1):
-        img_size = int(num_patches**.5)
+    def get_general_quadratic_rel_indices(self, win_size,blocks,gamma=1):
+        w,h = win_size
+        num_patches = w * h
         rel_indices   = torch.zeros(num_patches, num_patches,5)
-        ind = torch.arange(img_size).view(1,-1) - torch.arange(img_size).view(-1, 1)
-        indx = ind.repeat(img_size,img_size)
-        indy = ind.repeat_interleave(img_size,dim=0).repeat_interleave(img_size,dim=1)
+        # h w
+        ind = torch.arange(h).view(1,-1) - torch.arange(w).view(-1, 1)
+        # hw hw
+        indx = ind.repeat(h,w)
+        indy = ind.repeat_interleave(h,dim=0).repeat_interleave(w,dim=1).T
         indxx = indx**2 
         indyy = indy**2
         indxy = indx * indy
-        rel_indices[:,:,4] = torch.sigmoid(indxy.unsqueeze(0))
+        rel_indices[:,:,4] =  indxy.unsqueeze(0)
         rel_indices[:,:,3] = indyy.unsqueeze(0)      
         rel_indices[:,:,2] = indxx.unsqueeze(0)
         rel_indices[:,:,1] = indy.unsqueeze(0)
         rel_indices[:,:,0] = indx.unsqueeze(0)
         self.register_buffer("rel_indices", rel_indices)
         self.attention_centers = nn.Parameter(
-            torch.zeros(blocks*channel_split, 2).normal_(0.0,self.att_std)
+            torch.zeros(blocks*gamma, 2).normal_(0.0,self.att_std)
         )
-        attention_spreads = torch.eye(2).unsqueeze(0).repeat(blocks*channel_split, 1, 1)
+        attention_spreads = torch.eye(2).unsqueeze(0).repeat(blocks*gamma, 1, 1)
         attention_spreads += torch.zeros_like(attention_spreads).normal_(0,self.att_std)
         self.attention_spreads = nn.Parameter(attention_spreads)
 
-    def get_quadratic_pos_proj(self):
+    def get_absolute_indices(self, win_size,blocks):
+        w,h= win_size
+        num_patches = w * h        # h w
+        d_model_double = 200
+        if d_model_double % 4 != 0:
+            raise ValueError("Cannot use sin/cos positional encoding with "
+                            "odd dimension (got dim={:d})".format(d_model_double))
+        pe = torch.zeros(d_model_double, w, h)
+        # Each dimension use half of d_model
+        d_model = int(d_model_double / 2)
+        div_term = torch.exp(torch.arange(0., d_model, 2) *
+                            -(math.log(40.0) / d_model))
+        pos_w = torch.arange(0., w).unsqueeze(1)
+        pos_h = torch.arange(0., h).unsqueeze(1)
+        pe[0:d_model:2, :, :] = torch.sin(pos_w * div_term).transpose(0, 1).unsqueeze(1).repeat(1, h, 1)
+        pe[1:d_model:2, :, :] = torch.cos(pos_w * div_term).transpose(0, 1).unsqueeze(1).repeat(1, h, 1)
+        pe[d_model::2, :, :] = torch.sin(pos_h * div_term).transpose(0, 1).unsqueeze(2).repeat(1, 1, w)
+        pe[d_model + 1::2, :, :] = torch.cos(pos_h * div_term).transpose(0, 1).unsqueeze(2).repeat(1, 1, w)
+        # n, d_model_double
+        pe = pe.view(d_model_double,-1).transpose(0,1)
+        self.register_buffer('pe', pe)
+        self.abosolute_positional_bias = nn.Parameter(torch.zeros(1, d_model_double).normal_(0.0,1e-6))
+
+    def get_quadratic_rel_indices(self, win_size,blocks,gamma=1):
+        w,h = win_size
+        num_patches = w * h
+        rel_indices   = torch.zeros(num_patches, num_patches,3)
+        # h w
+        ind = torch.arange(h).view(1,-1) - torch.arange(w).view(-1, 1)
+        # hw hw
+        indx = ind.repeat(h,w)
+        indy = ind.repeat_interleave(h,dim=0).repeat_interleave(w,dim=1).T
+        indd = indx**2 + indy**2
+        rel_indices[:,:,2] = indd.unsqueeze(0)
+        rel_indices[:,:,1] = indy.unsqueeze(0)
+        rel_indices[:,:,0] = indx.unsqueeze(0)
+        self.register_buffer("rel_indices", rel_indices)
+        self.attention_centers = nn.Parameter(
+            torch.zeros(blocks*gamma, 2).normal_(0.0,self.att_std)
+        )
+        attention_spreads = 1 + torch.zeros(blocks*gamma).normal_(0, self.att_std)
+        self.attention_spreads = nn.Parameter(attention_spreads)
+
+
+
+    def forward_generalized_qua_pos(self):
+        # B,D
+
         mu_1, mu_2 = self.attention_centers[:, 0], self.attention_centers[:, 1]
         inv_covariance = torch.einsum('hij,hkj->hik', [self.attention_spreads, self.attention_spreads])
         a, b, c = inv_covariance[:, 0, 0], inv_covariance[:, 0, 1], inv_covariance[:, 1, 1]
+
         # bs,5
         pos_proj =-1/2 * torch.stack([
             -2*(a*mu_1 + b*mu_2),
@@ -150,70 +153,50 @@ class SGatingUnit(nn.Module):
             c,
             2 * b
         ], dim=-1)
-        return pos_proj
+        # bs m n
+        pos_score = torch.einsum('mnd,bd->bmn',self.rel_indices,pos_proj)
+        relative_position_bias = self.sft(pos_score)
 
-    def forward_pos(self):
-        relative_position_bias = 0
-        block_relative_position_bias = 0
-        if self.pos:
-            if self.quadratic:
-                # B,D
-                pos_proj = self.get_quadratic_pos_proj()
-                # bs m n
-                pos_score = torch.einsum('mnd,bd->bmn',self.rel_indices,pos_proj)
-                relative_position_bias = nn.Softmax(-1)(pos_score)
-            else:
-                relative_position_bias = self.window_relative_position_bias_table[self.window_relative_position_index.view(-1)].view(
-                    self.wh * self.wh, self.wh * self.wh, -1)  # Wh*Ww,Wh*Ww,block
-                relative_position_bias =  relative_position_bias.permute(2, 0, 1).contiguous()  # block, Wh*Ww, Wh*Ww
-            if self.blocksplit:
-                block_relative_position_bias = self.block_relative_position_bias_table[self.block_relative_position_index.view(-1)].view(
-                    self.blocks ,self.blocks , -1)  # block*block,block*block,1
-                block_relative_position_bias = nn.Softmax(-1)(block_relative_position_bias.permute(2, 0, 1).contiguous())  # 1,block^2,block^2
-        return relative_position_bias,block_relative_position_bias
+        # abosolute_position_bias = torch.einsum('nd,bd->bn',self.pe,self.abosolute_positional_bias)
 
-    def forward(self, x):
-        # B W N C
+        # import matplotlib.pyplot as plt
+        # out = abosolute_position_bias[0]
+        # fig = plt.figure(figsize=(16, 16),tight_layout=True)
+        # ax = fig.add_subplot(1,1,1)
+        # ax.plot(out.detach().numpy())
+        # fig.savefig(f'./figure/nest_gmlp_s_SPE/save_img_{self.idx}.jpg', facecolor='grey', edgecolor='red')
+        return relative_position_bias
+
+    def forward_qua_pos(self):
+        # B,D
+
+        mu_1, mu_2 = self.attention_centers[:, 0], self.attention_centers[:, 1]
+        # garantee is positve 
+        a = self.attention_spreads**2
+        # bs,5
+        pos_proj = torch.stack([ a*mu_1, a * mu_2 ,-1/2*torch.ones_like(mu_1)], dim=-1)
+
+        # bs m n
+        pos_score = torch.einsum('mnd,bd->bmn',self.rel_indices,pos_proj)
+        relative_position_bias = self.sft(pos_score)
+
+        return relative_position_bias
+
+    def forward(self,x):
         x = x.unsqueeze(1)
-        B,W,N,C = x.size()
-        x_chunks = x.chunk(2, dim=-1)
-        u = x_chunks[0]
-        v = x_chunks[1]
-        # u = self.norm(u)
-        # b n n , 1 b b
-        u = rearrange(u,'b w n (v s) -> b w n v s', s = self.channel_split)
-        relative_position_bias, block_relative_position_bias = self.forward_pos()
-        relative_position_bias = rearrange(relative_position_bias,'(s b) m n  -> b m n s', s = self.channel_split)
-        # pos_bias = torch.einsum('wmn,bwnc->bwmc',relative_position_bias,u) if self.pos else torch.zeros_like(u)  
-        # wmns
-        if self.pos_only:
-            win_weight=relative_position_bias
-        else:
-            win_weight = torch.einsum('w,wmns->wmns',1-self.sig(self.window_lamb),self.token_proj_n_weight.unsqueeze(-1))+\
-            torch.einsum('w,wmns->wmns',1-self.sig(self.window_lamb),relative_position_bias)
-        win_weight = win_weight
-        u_1 = rearrange(torch.einsum('wmns,bwnvs->bwmvs',win_weight,u),'b w n v s -> b w n (v s)') + self.token_proj_n_bias.unsqueeze(0)
-        u_1 = u_1 * v
-        if self.blocksplit:
-            u_2 = u.mean(2).unsqueeze(2)
-            # block_pos_bias = torch.einsum('lmn,bnlc->bmlc', block_relative_position_bias,u_2) if self.pos else torch.zeros_like(u_2)
-            block_weight = torch.einsum('w,wmn->wmn',1-self.sig(self.block_lamb),self.block_proj_n_weight)+\
-            torch.einsum('w,wmn->wmn',1-self.sig(self.block_lamb),block_relative_position_bias)
-            u_2 = torch.einsum('lmn,bnlc->bmlc',block_weight,u_2) + self.block_proj_n_bias.unsqueeze(-1)
-            # b w 1 c
-            u_2 = u_2 * v.mean(2).unsqueeze(2)
-            # print(u_2.size())
-            gating = self.split_lamb.view(1,-1,1,1)
-            u =  torch.sigmoid(gating) * u_1 +(1.-torch.sigmoid(gating)) * u_2
- 
-            return u
-        else:
-            return u_1.squeeze(1)
+        x = rearrange(x,'b w n (v s) -> b w n v s', s = self.gamma)
+        win_weight = self.forward_pos()
 
+        win_weight = rearrange(win_weight,'(s b) m n  -> b m n s', s = self.gamma)
+        x = torch.einsum('wmns,bwnvs->bwmvs',win_weight,x)  +  self.token_proj_n_bias.unsqueeze(0).unsqueeze(-1)
+        x = rearrange(x,'b w n v s -> b w n (v s)').squeeze(1) 
+        return x
+
+    
 
 class SpatialGatingUnit(nn.Module):
 
-    def __init__(self, dim, seq_len,chunks=2,with_att = True, norm_layer=nn.LayerNorm, layer_idx=None):
+    def __init__(self, dim, seq_len,chunks=2,with_att = True, norm_layer=nn.LayerNorm, layer_idx=None,**kwargs):
         super().__init__()
         self.chunks = chunks
         self.with_att= with_att
@@ -234,7 +217,6 @@ class SpatialGatingUnit(nn.Module):
 
     def forward(self, x):
         # B N C
-        att = self.att(x) if self.with_att else 0
         if self.pad_dim:
             x = x[:,:,:-self.pad_dim]
         x_chunks = x.chunk(self.chunks, dim=-1)
@@ -243,11 +225,46 @@ class SpatialGatingUnit(nn.Module):
             v = x_chunks[i+1]
             u = self.norm_list[i](u)
             u = self.proj_list[i](u.transpose(-1, -2))
-            if i == self.chunks -1:
-                u = u.transpose(-1, -2) + att
-            else:
-                u = u.transpose(-1, -2)
+            u = u.transpose(-1, -2)
             u = u * v
+        return u
+
+
+class SGatingUnit(nn.Module):
+    
+    def __init__(self, dim, win_size=(14,14),chunks=2, norm_layer=nn.LayerNorm,pos_emb=True,num_blocks=1,quadratic=True,blockwise=False,
+    blocksplit=False,gamma=16,pos_only=True,**kwargs):
+        super().__init__()
+        self.chunks = chunks
+        # self.wh =int(math.pow(seq_len,0.5))
+        self.pos=pos_emb
+        self.blocksplit=blocksplit if num_blocks>1 else False
+        self.blocks=num_blocks 
+        self.win_blocks=num_blocks if blockwise else 1
+        self.gate_dim = dim // chunks
+        self.seq_len=win_size[0]*win_size[1]
+        self.quadratic = quadratic
+        self.pos_only=pos_only
+
+
+        self.pos=QuaMap(self.gate_dim,win_size,num_blocks,gamma=gamma,**kwargs)
+
+
+
+        # if not self.pos_only:
+        #     self.token_proj_n_weight = nn.Parameter(torch.zeros(1, self.seq_len, self.seq_len))
+        #     trunc_normal_(self.token_proj_n_weight,std=1e-6)
+
+    def forward(self, x):
+        # B W N C
+
+        x_chunks = x.chunk(2, dim=-1)
+        u = x_chunks[0]
+        v = x_chunks[1]
+
+        u =self.pos(u)
+        
+        u = u * v
         return u
 
 class SpaticialChannelGU(nn.Module):
@@ -511,7 +528,7 @@ class MlpMixer(nn.Module):
         self.blocks = nn.Sequential(*[
             block_layer(
                 embed_dim, self.seq_len ,mlp_ratio= mlp_ratio, mlp_layer=mlp_layer, norm_layer=norm_layer,
-                act_layer=act_layer,chunks= chunks,with_att=with_att,gate_unit=gate_unit, drop=drop_rate, drop_path=drop_path_rate,layer_idx=i,**kwargs)
+                act_layer=act_layer,chunks= chunks,with_att=with_att,gate_unit=gate_unit, drop=drop_rate,idx=i, drop_path=drop_path_rate,layer_idx=i,**kwargs)
             for i in range(num_blocks)])
         self.norm = norm_layer(embed_dim)
         self.head = nn.Linear(embed_dim, self.num_classes) if num_classes > 0 else nn.Identity()

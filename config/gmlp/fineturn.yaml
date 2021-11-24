@@ -13,11 +13,11 @@ class_ratio : 1
 clip_grad: 1.0
 clip_mode: norm
 color_jitter: 0.4
-cooldown_epochs: 5
+cooldown_epochs: 0
 crop_pct: 0.9
 cutmix: 1.0
 cutmix_minmax: null
-data: "/data1/datasets/ImageNet2012"
+data: "/home/zhicai/ImageNet2012"
 dataset: ""
 decay_epochs: 1.0
 decay_rate: 0.988
@@ -27,7 +27,7 @@ drop_block: null
 drop_connect: null
 drop_path: 0.1
 epoch_repeats: 0.0
-epochs: 120
+epochs: 20
 eval_metric: top1
 experiment: ''
 gp: null
@@ -40,7 +40,7 @@ jsd: false
 local_rank: 0
 log_interval: 50
 log_wandb: false
-lr: 0.0016
+lr: 0.0004
 lr_cycle_limit: 1
 lr_cycle_mul: 1.0
 lr_noise: null
@@ -53,8 +53,21 @@ mixup_mode: batch
 mixup_off_epoch: 0
 mixup_prob: 1.0
 mixup_switch_prob: 0.5
-model: mixer_s16_224_2
+model: nest_gmlp
 model_hyper:
+  quadratic : True
+  pos_only : True
+  generalized : true
+  downsample_norm: "LN"
+  stem_norm: "BN"
+  windows: [14,14,14,7]
+  gamma: [8,16,32,64]
+  embed_dims: [96, 192, 384,768]
+  depths: [2, 2, 18,2]
+  mlp_ratio: [4,4,4,2]
+  num_levels: 4
+  shift: false
+  pretrained: "/data/zhicai/ckpts/Mgmlp/checkpoint-20.pth_BN_LN.tar"
 model_ema: true
 model_ema_decay: 0.99992
 model_ema_force_cpu: false
@@ -70,7 +83,6 @@ opt_eps: 1.0e-06
 output: '/data/zhicai/ckpts/Mgmlp'
 patience_epochs: 10
 pin_mem: false
-pretrained: false
 ratio:
 - 0.67
 - 1.5
@@ -79,8 +91,8 @@ recovery_interval: 0
 remode: pixel
 reprob: 0.0
 resplit: false
-resume: ''
-sample_ratio: 0.5
+resume: "/data/zhicai/ckpts/Mgmlp/train/20211123-034430-nest_gmlp-224/checkpoint-2.pth.tar"
+sample_ratio: 1
 save_images: false
 scale:
 - 0.08
@@ -100,7 +112,7 @@ use_multi_epochs_loader: false
 val_split: validation
 validation_batch_size_multiplier: 1
 vflip: 0.0
-warmup_epochs: 5
+warmup_epochs: 0
 warmup_lr: 1.0e-05
 weight_decay: 0.067
 workers: 4

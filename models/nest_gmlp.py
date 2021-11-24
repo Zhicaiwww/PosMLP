@@ -714,7 +714,6 @@ def Create_PosMLP( **kwargs):
     model = PosMLP(**model_kwargs)
     return model
 
-
 @register_model
 def PosMLP_3T14_224(**kwargs):
     """ Nest-S @ 224x224
@@ -725,6 +724,7 @@ def PosMLP_3T14_224(**kwargs):
 
 
 
+
 @register_model
 def PosMLP_T14_224(**kwargs):
     """ Nest-S @ 224x224
@@ -732,6 +732,7 @@ def PosMLP_T14_224(**kwargs):
     model_kwargs = dict(embed_dims=(96, 192, 384,768),  depths=(2, 2, 18,2),mlp_ratio=(4,4,4,2),num_levels=4,chunks=2,gamma=(8,16,32,64),**kwargs)
     model = PosMLP(**model_kwargs)
     return model
+
 
 @register_model
 def PosMLP_T14_384(**kwargs):

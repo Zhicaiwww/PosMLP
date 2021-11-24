@@ -81,6 +81,8 @@ def show_weight(path,indexes=[0,-1],is_all = True,save_path=None):
         ax.imshow(to_vw[idx])
         ax.axis('off')
         ax = fig.add_subplot(2,2,2)
+        ax.set_xticks([])
+        ax.set_yticks([])
         ax.imshow(bias_map[idx])
         ax.axis('off')
         ax = fig.add_subplot(2,2,3)

@@ -722,6 +722,29 @@ def PosMLP_3T14_224(**kwargs):
     model = PosMLP( **model_kwargs)
     return model
 
+@register_model
+def nest_gmlp_s4_p4(pretrained=False, **kwargs):
+    """ Nest-S @ 224x224
+    """
+    model_kwargs = dict(embed_dims=(96, 192, 384,768),  depths=(2, 4, 8, 10),num_levels=4,chunks=2,patch_size=4,**kwargs)
+    model = _create_nest('nest_gmlp_s4', pretrained=pretrained, **model_kwargs)
+    return model
+
+@register_model
+def nest_gmlp_s4_p4(pretrained=False, **kwargs):
+    """ Nest-S @ 224x224
+    """
+    model_kwargs = dict(embed_dims=(96, 192, 384,768),  depths=(2, 4, 12, 4),num_levels=4,chunks=2,patch_size=4,**kwargs)
+    model = _create_nest('nest_gmlp_s4', pretrained=pretrained, **model_kwargs)
+    return model
+
+@register_model
+def nest_gmlp_b4(pretrained=False, **kwargs):
+    """ Nest-S @ 224x224
+    """
+    model_kwargs = dict(embed_dims=(64, 128, 256, 512),  depths=(2, 2, 2, 16),num_levels=4,chunks=2,patch_size=2,**kwargs)
+    model = _create_nest('nest_gmlp_s4', pretrained=pretrained, **model_kwargs)
+    return model
 
 
 

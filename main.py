@@ -1,5 +1,5 @@
 """
-ViP training and evaluating script
+PosMLP training and evaluating script
 This script is modified from pytorch-image-models by Ross Wightman (https://github.com/rwightman/pytorch-image-models/)
 It was started from an early version of the PyTorch ImageNet example
 (https://github.com/pytorch/examples/tree/master/imagenet)
@@ -19,8 +19,7 @@ import torch.nn as nn
 import torchvision.utils
 from torch.nn.parallel import DistributedDataParallel as NativeDDP
 
-from datasets import create_dataset
-from timm.data import create_loader, resolve_data_config, Mixup, FastCollateMixup, AugMixDataset
+from timm.data import create_loader, resolve_data_config, Mixup, FastCollateMixup, AugMixDataset,create_dataset
 from timm.models import load_checkpoint, resume_checkpoint, convert_splitbn_model,create_model
 from timm.utils import *
 from timm.loss import LabelSmoothingCrossEntropy, SoftTargetCrossEntropy, JsdCrossEntropy
@@ -243,9 +242,9 @@ def main():
         _logger.info('Scheduled epochs: {}'.format(num_epochs))
 
     dataset_train = create_dataset(
-            args.dataset, root=args.data, split=args.train_split, is_training=True, batch_size=args.batch_size,class_ratio=args.class_ratio,sample_ratio=args.sample_ratio)
+            args.dataset, root=args.data, split=args.train_split, is_training=True, batch_size=args.batch_size)
     dataset_eval = create_dataset(
-        args.dataset, root=args.data, split=args.val_split, is_training=False, batch_size=args.batch_size,class_ratio=args.class_ratio,sample_ratio=args.sample_ratio)
+        args.dataset, root=args.data, split=args.val_split, is_training=False, batch_size=args.batch_size)
 
     collate_fn = None
     mixup_fn = None

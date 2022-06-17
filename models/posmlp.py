@@ -5,7 +5,7 @@ from functools import partial
 import torch
 import torch.nn.functional as F
 from torch import nn
-
+from patch_downsample import *
 from timm.models.layers import DropPath, trunc_normal_,create_classifier
 from timm.models.registry import register_model
 from einops import rearrange
@@ -22,33 +22,6 @@ def get_rank():
     return dist.get_rank()
 
 
-class SE(nn.Module):
-    def __init__(self,**kwargs):
-        super().__init__()
-    def forward(self,x):
-        assert len(x.size()) == 4
-        x = x.mean(2,keepdim =True)
-        return x
-
-class Mlp(nn.Module):
-    """ MLP as used in Vision Transformer, MLP-Mixer and related networks
-    """
-    def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.):
-        super().__init__()
-        out_features = out_features or in_features
-        hidden_features = hidden_features or in_features
-        self.fc1 = nn.Linear(in_features, hidden_features)
-        self.act = act_layer()
-        self.fc2 = nn.Linear(hidden_features, out_features)
-        self.drop = nn.Dropout(drop)
-
-    def forward(self, x):
-        x = self.fc1(x)
-        x = self.act(x)
-        x = self.drop(x)
-        x = self.fc2(x)
-        x = self.drop(x)
-        return x
 
 class QuaMap(nn.Module):
     def __init__(self,win_size,gamma=4,use_softmax=True,att_std = 1e-2,generalized=True,absolute_bias=True,symmetric=True,layer_idx=1,**kwargs):
@@ -62,12 +35,6 @@ class QuaMap(nn.Module):
         self.absolute_bias = absolute_bias
         self.sft=nn.Softmax(-2) if use_softmax else nn.Identity()
         self.get_rel_indices(self.win_size,gamma=self.gamma,generalized=generalized)
-        # self.forward_pos=self.forward_generalized_qua_pos
-        # else: 
-        #     self.get_quadratic_rel_indices(self.win_size,1,gamma=self.gamma)
-            # self.forward_pos=self.forward_qua_pos
-        # self.get_absolute_indices(self.win_size)
-        # # else:
         self.token_proj_n_bias = nn.Parameter(torch.zeros(1, win_size*win_size,1))
 
     def get_rel_indices(self, win_size,gamma=1,generalized=True):
@@ -105,30 +72,6 @@ class QuaMap(nn.Module):
 
         self.register_buffer("rel_indices", rel_indices)
 
-    def get_absolute_indices(self, win_size):
-        h = win_size
-        w = win_size     # h w
-        d_model_double = 200
-        if d_model_double % 4 != 0:
-            raise ValueError("Cannot use sin/cos positional encoding with "
-                            "odd dimension (got dim={:d})".format(d_model_double))
-        pe = torch.zeros(d_model_double, w, h)
-        # Each dimension use half of d_model
-        d_model = int(d_model_double / 2)
-        div_term = torch.exp(torch.arange(0., d_model, 2) *
-                            -(math.log(40.0) / d_model))
-        pos_w = torch.arange(0., w).unsqueeze(1)
-        pos_h = torch.arange(0., h).unsqueeze(1)
-        pe[0:d_model:2, :, :] = torch.sin(pos_w * div_term).transpose(0, 1).unsqueeze(1).repeat(1, h, 1)
-        pe[1:d_model:2, :, :] = torch.cos(pos_w * div_term).transpose(0, 1).unsqueeze(1).repeat(1, h, 1)
-        pe[d_model::2, :, :] = torch.sin(pos_h * div_term).transpose(0, 1).unsqueeze(2).repeat(1, 1, w)
-        pe[d_model + 1::2, :, :] = torch.cos(pos_h * div_term).transpose(0, 1).unsqueeze(2).repeat(1, 1, w)
-        # n, d_model_double
-        pe = pe.view(d_model_double,-1).transpose(0,1)
-        self.register_buffer('pe', pe)
-        self.abosolute_positional_bias = nn.Parameter(torch.zeros(1, d_model_double).normal_(0.0,1e-6))
-
-
     def forward_pos(self,mask=None):
         # B,D
 
@@ -165,17 +108,6 @@ class QuaMap(nn.Module):
 
         posmap = self.sft(pos_score)
         return posmap
-        # print(relative_position_bias[:,:,0,0])
-        # abosolute_position_bias = torch.einsum('nd,bd->bn',self.pe,self.abosolute_positional_bias)
-        # import matplotlib.pyplot as plt
-        # out = abosolute_position_bias[0]
-        # fig = plt.figure(figsize=(16, 16),tight_layout=True)
-        # ax = fig.add_subplot(1,1,1)
-        # ax.plot(out.detach().numpy())
-        # fig.savefig(f'./figure/nest_gmlp_s_SPE/save_img_{self.layer_idx}.jpg', facecolor='grey', edgecolor='red')
-
-
-
 
     def forward(self,x,mask=None):
         # B, m , n
@@ -201,7 +133,7 @@ class LearnedPosMap(nn.Module):
         h= win_size
         w= win_size
         self.register_parameter(f'{register_name}_relative_position_bias_table' ,nn.Parameter(
-            torch.zeros((2 * h - 1) * (2 * w - 1), 1)))
+            torch.zeros((2 * h - 1) * (2 * w - 1), self.gamma)))
 
 
         coords_h = torch.arange(h)
@@ -225,7 +157,7 @@ class LearnedPosMap(nn.Module):
     def forward_pos(self):
         posmap = self.window_relative_position_bias_table[self.window_relative_position_index.view(-1)].view(
             self.seq_len, self.seq_len, -1) 
-        posmap =  posmap.permute(2, 0, 1).contiguous().repeat(self.gamma,1,1) 
+        posmap =  posmap.permute(2, 0, 1).contiguous()
         return posmap
 
     def forward(self,x,weight=None,mask=None):
@@ -243,7 +175,7 @@ class LearnedPosMap(nn.Module):
  
         return x
 
-class SGunit(nn.Module):
+class SGU(nn.Module):
 
     def __init__(self, dim, win_size,chunks=2, norm_layer=nn.LayerNorm, layer_idx=None,**kwargs):
         super().__init__()
@@ -277,7 +209,7 @@ class SGunit(nn.Module):
             u = u * v
         return u
 
-class PEGunit(nn.Module):
+class PoSGU(nn.Module):
     
     def __init__(self, dim, win_size,chunks=2, norm_layer=nn.LayerNorm,quadratic=True, gamma=16,pos_only=True,USE_SE=False,**kwargs):
         super().__init__()
@@ -286,15 +218,11 @@ class PEGunit(nn.Module):
         self.seq_len=win_size*win_size
         self.quadratic = quadratic
         self.pos_only=pos_only
-        if USE_SE:
-            self.pos=SE(**kwargs)
-            _logger.info("using SE instead!")
-        else:
-            if self.quadratic:
-                self.pos=QuaMap(win_size,gamma=gamma,norm_layer=norm_layer,**kwargs)
-            else:
-                self.pos=LearnedPosMap(win_size,gamma=gamma,norm_layer=norm_layer,**kwargs)
 
+        if self.quadratic:
+            self.pos=QuaMap(win_size,gamma=gamma,norm_layer=norm_layer,**kwargs)
+        else:
+            self.pos=LearnedPosMap(win_size,gamma=gamma,norm_layer=norm_layer,**kwargs)
 
         if not self.pos_only:
             self.token_proj_n_weight = nn.Parameter(torch.zeros(1, self.seq_len, self.seq_len))
@@ -318,84 +246,10 @@ class PEGunit(nn.Module):
 
         return u
 
-class PatchMerging(nn.Module):
 
-    def __init__(self, in_chan ,out_chan, norm_layer=partial(nn.LayerNorm, eps=1e-6),**kwargs):
-        super().__init__()
-        self.out_chan = out_chan
-        self.norm = norm_layer(2 * out_chan)
-        self.reduction = nn.Conv2d(2 * out_chan,  out_chan, 1, 1, bias=False)
-
-
-    def forward(self, x):
-
-        B, C, H, W = x.shape
-        assert H % 2 == 0 and W % 2 == 0, f"x size ({H}*{W}) are not even."
-        x = x.view(B, C, H, W)
-
-        x0 = x[:, :, 0::2, 0::2]  # B C H/2 W/2 
-        x1 = x[:, :, 1::2, 0::2]  # B C H/2 W/2 
-        x2 = x[:, :, 0::2, 1::2]  # B C H/2 W/2 
-        x3 = x[:, :, 1::2, 1::2]  # B C H/2 W/2 
-        x = torch.cat([x0, x1, x2, x3], 1)  # B 4*C H/2 W/2 
-
-        x = self.norm(x.permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
-        x = self.reduction(x)
-
-        return x
-
-class ConvPatchEmbed(nn.Module):
-    """ 2D Image to Patch Embedding
-        patch size is freezed to be 4
-    """
-    def __init__(self, in_chan=3, out_chan=96,stem_norm="LN",act_layer=nn.GELU,**kwargs):
-        super().__init__()
-        norm_layer = nn.BatchNorm2d if stem_norm=='BN' else nn.LayerNorm
-        self.in_chans=[in_chan,out_chan//2,out_chan]
-        self.out_chans = [out_chan//2,out_chan,out_chan]
-        self.strides=[2,2,1]
-        self.kernels=[3,3,1]
-        self.pads = [1,1,0]
-        self.projs = nn.Sequential(*[nn.Conv2d(in_chan, out_chan,kernel_size=kernel, stride=stride,padding=pad) for 
-        in_chan, out_chan,kernel,stride,pad in zip(self.in_chans,self.out_chans,self.kernels,self.strides,self.pads)]) 
-        self.stem_norm = stem_norm
-        self.norms = nn.Sequential(*[norm_layer(out_chan,eps=1e-6) for out_chan in self.out_chans])
-        self.act = act_layer()
-
-    def forward(self, x):
-        for i ,(proj, norm) in enumerate(zip(self.projs,self.norms)):
-            x = proj(x)
-            x = norm(x) if self.stem_norm == "BN" else norm(x.permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
-            if i == len(self.kernels)-1:
-                break
-            x = self.act(x)
-        return x
-
-class ConvPatchMerging(nn.Module):
-
-    def __init__(self, in_chan, out_chan, downsample_norm="LN",depth_conv = True,**kwargs):
-        super().__init__()
-        self.downsample_norm = downsample_norm
-        norm_layer = nn.BatchNorm2d if downsample_norm=='BN' else nn.LayerNorm
-        groups = 1
-        if depth_conv:
-            _logger.info("using depth_con instead!")
-            groups = in_chan
-        self.conv = nn.Conv2d(in_chan,out_chan,kernel_size=3,stride=2,groups=groups,padding=1,bias=True)
-        self.norm = norm_layer(out_chan,eps=1e-6)
-
-
-    def forward(self, x):
-        """
-        x is expected to have shape (B, C, H, W)
-        """
-        x = self.conv(x)
-        x = self.norm(x) if self.downsample_norm=="BN" else self.norm(x.permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
-
-        return x  # (B, C, H//2, W//2)
 
 class PosMLPLayer(nn.Module):
-    def __init__(self, dim, win_size,shift = False, gate_unit=PEGunit, num_blocks=1,
+    def __init__(self, dim, win_size,shift = False, gate_unit=PoSGU, num_blocks=1,
     chunks = 2, mlp_ratio=4., drop=0., drop_path_rates=0., act_layer=nn.GELU,norm_layer=nn.LayerNorm,layer_idx=0,gamma=8,**kwargs):
         super().__init__()  
         chunks = chunks  
@@ -560,7 +414,7 @@ class PosMLP(nn.Module):
                 depths=(2,2,18,2), 
                 mlp_ratio=(4,4,4,2),
                 num_classes=1000, 
-                gate_unit=PEGunit,
+                gate_unit=PoSGU,
                 gate_layer=PosMLPLayer,
                 pool_layer=ConvPatchMerging,
                 stem = ConvPatchEmbed,
@@ -572,7 +426,6 @@ class PosMLP(nn.Module):
                 stem_norm="BN",
                 downsample_norm="BN",
                 pretrained=None,
-                USE_SE=False,
                 ape = False,
                 **kwargs):
         super().__init__()
@@ -585,7 +438,6 @@ class PosMLP(nn.Module):
         gamma =tuple(gamma)
         mlp_ratio=tuple(mlp_ratio)
         _logger.info(f"Using embed_dims{embed_dims}")
-
 
         assert len(mlp_ratio)==len(depths)==len(embed_dims)==num_levels
         self.num_classes = num_classes
@@ -616,7 +468,7 @@ class PosMLP(nn.Module):
             dim = embed_dims[i]
             levels.append(PosMLPLevel(
               gate_unit,self.win_size[i],depths[i], dim,pool_layer=pool_layer, downsample_norm=downsample_norm,gate_layer=gate_layer,prev_embed_dim=prev_dim,gamma=gamma[i],
-                mlp_ratio=mlp_ratio[i],  drop_rate=drop_rate, drop_path_rates = dp_rates[i], norm_layer=norm_layer, act_layer=act_layer,layer_idx=layer_idx,USE_SE=USE_SE,**kwargs))
+                mlp_ratio=mlp_ratio[i],  drop_rate=drop_rate, drop_path_rates = dp_rates[i], norm_layer=norm_layer, act_layer=act_layer,layer_idx=layer_idx,**kwargs))
             layer_idx += depths[i]
             prev_dim = dim
         self.levels = nn.Sequential(*levels)
@@ -638,28 +490,6 @@ class PosMLP(nn.Module):
         out_ckpt={}
         # model_state =dict(self.named_parameters())
         for key,value in ckpt.items():
-            # if "attention_centers" in key :
-            #     continue
-            #     # assert key in model_state.keys() 
-            #     # value = value[:model_state[key].size(0)]
-            # if "attention_spreads" in key :
-
-            #     # assert key in model_state.keys() 
-            #     # attention_spreads = torch.zeros_like(value).normal_(0,0.01)
-            #     # attention_spreads += torch.eye(2).unsqueeze(0).repeat(value.size(0), 1, 1)
-            #     # value = attention_spreads
-            #     print("initialized spreads!")
-            #     value = value[:model_state[key].size(0)]
-            #     continue
-            # if "pool.norm" in key :
-            #     print("initialized pools")
-            #     continue
-            # elif "token_proj_n_bias" in key:
-            #     # assert key in model_state.keys() 
-            #     # value = value[:model_state[key].size(0)]
-            #     continue
-            # elif "patch_embed.norms" in key:
-            #       continue
             out_ckpt[key] = value
         return out_ckpt
 
@@ -721,32 +551,6 @@ def PosMLP_3T14_224(**kwargs):
     model_kwargs = dict(embed_dims=(96, 192, 384),  depths=(2, 2, 20),mlp_ratio=(4,4,4),num_levels=3,num_blocks=(64,4,1),gamma=(8,16,32),**kwargs)
     model = PosMLP( **model_kwargs)
     return model
-
-@register_model
-def nest_gmlp_s4_p4(pretrained=False, **kwargs):
-    """ Nest-S @ 224x224
-    """
-    model_kwargs = dict(embed_dims=(96, 192, 384,768),  depths=(2, 4, 8, 10),num_levels=4,chunks=2,patch_size=4,**kwargs)
-    model = _create_nest('nest_gmlp_s4', pretrained=pretrained, **model_kwargs)
-    return model
-
-@register_model
-def nest_gmlp_s4_p4(pretrained=False, **kwargs):
-    """ Nest-S @ 224x224
-    """
-    model_kwargs = dict(embed_dims=(96, 192, 384,768),  depths=(2, 4, 12, 4),num_levels=4,chunks=2,patch_size=4,**kwargs)
-    model = _create_nest('nest_gmlp_s4', pretrained=pretrained, **model_kwargs)
-    return model
-
-@register_model
-def nest_gmlp_b4(pretrained=False, **kwargs):
-    """ Nest-S @ 224x224
-    """
-    model_kwargs = dict(embed_dims=(64, 128, 256, 512),  depths=(2, 2, 2, 16),num_levels=4,chunks=2,patch_size=2,**kwargs)
-    model = _create_nest('nest_gmlp_s4', pretrained=pretrained, **model_kwargs)
-    return model
-
-
 
 @register_model
 def PosMLP_T14_224(**kwargs):

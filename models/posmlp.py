@@ -5,7 +5,7 @@ from functools import partial
 import torch
 import torch.nn.functional as F
 from torch import nn
-from patch_downsample import *
+from .patch_downsample import *
 from timm.models.layers import DropPath, trunc_normal_,create_classifier
 from timm.models.registry import register_model
 from einops import rearrange
@@ -38,6 +38,7 @@ class QuaMap(nn.Module):
         self.token_proj_n_bias = nn.Parameter(torch.zeros(1, win_size*win_size,1))
 
     def get_rel_indices(self, win_size,gamma=1,generalized=True):
+        
         h = win_size
         w = win_size
         num_patches = w * h
@@ -211,7 +212,7 @@ class SGU(nn.Module):
 
 class PoSGU(nn.Module):
     
-    def __init__(self, dim, win_size,chunks=2, norm_layer=nn.LayerNorm,quadratic=True, gamma=16,pos_only=True,USE_SE=False,**kwargs):
+    def __init__(self, dim, win_size,chunks=2, norm_layer=nn.LayerNorm,quadratic=True, gamma=16,pos_only=True,**kwargs):
         super().__init__()
         self.chunks = chunks
         self.gate_dim = dim // chunks
@@ -389,9 +390,6 @@ class PosMLPLevel(nn.Module):
         """
         x = self.pool(x)
         x = x.permute(0, 2, 3, 1) # (1,H,W,C)
-        # import matplotlib.pyplot as plt
-        # plt.imshow(x.squeeze().detach().numpy()[0])
-        # plt.savefig(f'./figure/visual/save_img_{self.idx}.pdf', edgecolor='red')
         if self.shift :
              x = self.encoder(x)  # (1, H, W, C)
         else:
@@ -424,9 +422,9 @@ class PosMLP(nn.Module):
                 act_layer=nn.GELU,
                 global_pool='avg',
                 stem_norm="BN",
-                downsample_norm="BN",
-                pretrained=None,
+                downsample_norm="LN",
                 ape = False,
+                pretrained = None,
                 **kwargs):
         super().__init__()
 
@@ -546,25 +544,25 @@ def Create_PosMLP( **kwargs):
 
 @register_model
 def PosMLP_3T14_224(**kwargs):
-    """ Nest-S @ 224x224
-    """
     model_kwargs = dict(embed_dims=(96, 192, 384),  depths=(2, 2, 20),mlp_ratio=(4,4,4),num_levels=3,num_blocks=(64,4,1),gamma=(8,16,32),**kwargs)
     model = PosMLP( **model_kwargs)
     return model
 
 @register_model
 def PosMLP_T14_224(**kwargs):
-    """ Nest-S @ 224x224
-    """
     model_kwargs = dict(embed_dims=(96, 192, 384,768),  depths=(2, 2, 18,2),mlp_ratio=(4,4,4,2),num_levels=4,chunks=2,gamma=(8,16,32,64),**kwargs)
+    model = PosMLP(**model_kwargs)
+    return model
+
+@register_model
+def PosMLP_S14_224(**kwargs):
+    model_kwargs = dict(embed_dims=(128,256,512,1024),  depths=(2, 2, 18,2),mlp_ratio=(4,4,4,2),num_levels=4,chunks=2,gamma=(8,16,32,64),**kwargs)
     model = PosMLP(**model_kwargs)
     return model
 
 
 @register_model
 def PosMLP_T14_384(**kwargs):
-    """ Nest-S @ 224x224
-    """
     model_kwargs = dict(img_size=(384,384),embed_dims=(96, 192, 384,768),  depths=(2, 2, 18,2),mlp_ratio=(4,4,4,2),num_levels=4,gamma=(8,16,32,64),**kwargs)
     model = PosMLP(**model_kwargs)
     return model

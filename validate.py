@@ -16,12 +16,11 @@ import torch.nn.parallel
 from collections import OrderedDict
 from contextlib import suppress
 
-from timm.models import apply_test_time_pool, load_checkpoint, is_model, list_models
+from timm.models import apply_test_time_pool, load_checkpoint, is_model, list_models, create_model
 from timm.models.helpers import load_state_dict
 from timm.data import create_dataset, create_loader, resolve_data_config, RealLabelsImagenet
 from timm.utils import accuracy, AverageMeter, natural_key, setup_default_logging, set_jit_legacy
 import models
-from models import create_model
 has_apex = False
 try:
     from apex import amp
@@ -136,7 +135,6 @@ def validate(args,**model_hyper):
     # create model
     model = create_model(
         args.model,
-        pretrained=args.pretrained,
         num_classes=args.num_classes,
         in_chans=3,
         global_pool=args.gp,

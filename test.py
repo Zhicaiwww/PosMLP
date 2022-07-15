@@ -16,7 +16,6 @@ parser.add_argument('-t', '--type', default='', type=str,
                     help='check which type to summary model')
 args = parser.parse_args()
 
-models.list_models()
 warnings.filterwarnings('ignore')
 # input=torch.randn([1,3,224,224])
 # input=torch.randn([1,3,224,224])
@@ -24,7 +23,7 @@ kwargs={
         'stem_name' :'Nest_ConvolutionalEmbed',# 'PatchEmbed' ,#'Nest_ConvolutionalEmbed',#'Nest_ConvolutionalEmbed'
         'quadratic' : True,
         'pos_only': True,
-        'gamma': (8,16,32,64),
+        'gamma': (128,32,32,64),
         "embed_dims" :(96, 192, 384,768),
         "depths" : (2, 2, 6,2),
         "mlp_ratio" : (4,4,4,2),
@@ -39,14 +38,11 @@ kwargs={
 transform = transforms.Compose([transforms.Resize((224,224)),
                                 transforms.ToTensor(),
                                 transforms.Normalize((123.675, 116.28, 103.53),(58.395, 57.12, 57.375))])
-image = pil.Image.open("/home/zhicai/ImageNet2012/val/n15075141/ILSVRC2012_val_00049174.JPEG")
-img = transform(image).unsqueeze(0)
-print(img.size())
 # path = '/data/zhicai/ckpts/Mgmlp/train/20211021-090705-nest_gmlp_s_b4-224/checkpoint-117.pth.tar'
 # pretrained="/data/zhicai/ckpts/Mgmlp/checkpoint-37.pth_nopoolnorm_81.3.tar"
-model = models.nest_gmlp_s_b4(downsample_norm="LN")
+model = models.PosMLP_T14_224()
 # model.load_state_dict(torch.load(path)['state_dict_ema'])
-
+img = torch.randn([1,3,224,224])
 # model = models.mixer_s16_224()
 if args.type == 'ptflops':
     from ptflops import get_model_complexity_info

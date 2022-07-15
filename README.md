@@ -1,19 +1,15 @@
-# Vision Permutator: A Permutable MLP-Like Architecture for Visual Recognition ([arxiv](https://arxiv.org/abs/2106.12368))
+# Parameterization of Cross-Token Relations with Relative Positional Encoding for Vision MLP
 
-This is a Pytorch implementation of our paper. We present Vision Permutator, a conceptually simple and data efficient
-MLP-like architecture for visual recognition. We show that our Vision Permutators are formidable competitors to convolutional neural
-networks (CNNs) and vision transformers. 
+This is a Pytorch implementation of our paper. We have presented a new gating unit PoSGU 
+which  replace the FC layer in SGU of [gMLP](https://proceedings.neurips.cc/paper/2021/hash/4cc05b35c2f937c5bd9e7d41d3686fff-Abstract.html) with relative positional encoding methods (Spercifically, LRPE and GQPE) and used it
+as the key building block to develop a new vision MLP architecture
+referred to as the PosMLP. We also hope this work will inspire further theoretical study of positional encoding
+in vision MLPs and could have a mature application as in vision
+Transformers.
 
-We hope this work could encourage researchers to rethink the way of encoding spatial
-information and facilitate the development of MLP-like models.
+![](figures/three-method.png)
 
-![Compare](permute_mlp.png)
-
-Basic structure of the proposed Permute-MLP layer. The proposed Permute-MLP layer contains
-three branches that are responsible for encoding features along the height, width, and channel
-dimensions, respectively. The outputs from the three branches are then combined using element-wise addition, followed by a fully-connected layer for feature fusion.
-
-Our code is based on the [pytorch-image-models](https://github.com/rwightman/pytorch-image-models), [Token Labeling](https://github.com/zihangJiang/TokenLabelinghttps://github.com/rwightman), [T2T-ViT](https://github.com/yitu-opensource/T2T-ViT)
+Our code is based on the [pytorch-image-models](https://github.com/rwightman/pytorch-image-models), [attention-cnn](https://github.com/epfml/attention-cnn), [swim-transformer](https://github.com/microsoft/Swin-Transformer)
 
 ### Comparison with Recent MLP-like Models
 

@@ -3,7 +3,7 @@ amp: true
 apex_amp: false
 native_amp: true
 aug_splits: 0
-batch_size: 120
+batch_size: 60
 bn_eps: null
 bn_momentum: null
 bn_tf: false
@@ -12,11 +12,11 @@ checkpoint_hist: 10
 clip_grad: 1.0
 clip_mode: norm
 color_jitter: 0.4
-cooldown_epochs: 10
+cooldown_epochs: 0
 crop_pct: 0.9
 cutmix: 1.0
 cutmix_minmax: null
-data: "/scratch/zhicai/ImageNet2012"
+data: "/data/zhicai/ImageNet2012"
 dataset: ""
 decay_epochs: 1.0
 decay_rate: 0.988
@@ -61,11 +61,12 @@ model_hyper:
   stem_norm: "BN"
   windows: [14,14,14,7]
   gamma: [8,16,32,64]
-  embed_dims: [96, 192, 384,768]
+  embed_dims: [128, 256, 512,1024]
   depths: [2, 2, 18,2]
   mlp_ratio: [4,4,4,2]
   num_levels: 4
   shift: false
+  pretrained: ""
 model_ema: true
 model_ema_decay: 0.99992
 model_ema_force_cpu: false

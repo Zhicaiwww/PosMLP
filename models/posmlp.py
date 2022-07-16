@@ -290,9 +290,7 @@ class PosMLPLayer(nn.Module):
         # @http://arxiv.org/abs/2103.14030
 
         _, H, W, C = x.size()
-        # H = int(math.sqrt(B*N))
-        # W = H
-        # x = x.view(-1,H,W,C)
+
         if self.shift_size > 0:
             # print("shift,here")
             shifted_x= torch.roll(

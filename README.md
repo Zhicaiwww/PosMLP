@@ -7,7 +7,7 @@ referred to as the PosMLP. We also hope this work will inspire further theoretic
 in vision MLPs and could have a mature application as in vision
 Transformers.
 
-![](figures/three-method.png)
+![](three-method.png)
 
 Our code is based on the [pytorch-image-models](https://github.com/rwightman/pytorch-image-models), [attention-cnn](https://github.com/epfml/attention-cnn), [swim-transformer](https://github.com/microsoft/Swin-Transformer),[vision-Permutator](https://github.com/Andrew-Qibin/VisionPermutator)
 

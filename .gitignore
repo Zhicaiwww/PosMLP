@@ -119,8 +119,6 @@ summary.csv
 *.out
 *.sh
 .csv/
-figure/
-*.png
 *.jpg
 *.tar
 #

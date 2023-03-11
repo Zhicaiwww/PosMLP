@@ -1,13 +1,5 @@
 
 
-""" Image to Patch Embedding using Conv2d
-
-A convolution based approach to patchifying a 2D image w/ embedding projection.
-
-Based on the impl in https://github.com/google-research/vision_transformer
-
-Hacked together by / Copyright 2020 Ross Wightman
-"""
 import torch
 from torch import nn as nn
 from timm.models.layers import to_2tuple

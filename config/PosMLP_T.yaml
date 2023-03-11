@@ -3,7 +3,7 @@ amp: true
 apex_amp: false
 native_amp: true
 aug_splits: 0
-batch_size: 120
+batch_size: 128
 bn_eps: null
 bn_momentum: null
 bn_tf: false
@@ -16,7 +16,7 @@ cooldown_epochs: 10
 crop_pct: 0.9
 cutmix: 1.0
 cutmix_minmax: null
-data: "/scratch/zhicai/ImageNet2012"
+data: /scratch/zhicai/ImageNet2012 #set your data dir
 dataset: ""
 decay_epochs: 1.0
 decay_rate: 0.988
@@ -39,7 +39,7 @@ jsd: false
 local_rank: 0
 log_interval: 50
 log_wandb: false
-lr: 0.001
+lr: 0.002
 lr_cycle_limit: 1
 lr_cycle_mul: 1.0
 lr_noise: null
@@ -78,7 +78,7 @@ num_classes: 1000
 opt: adamw
 opt_betas: null
 opt_eps: 1.0e-05
-output: '/data/zhicai/ckpts/Mgmlp'
+output: /data/zhicai/ckpts/Mgmlp # set your output dir
 patience_epochs: 10
 pin_mem: false
 pretrained: ""

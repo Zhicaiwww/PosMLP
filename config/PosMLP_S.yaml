@@ -16,7 +16,7 @@ cooldown_epochs: 0
 crop_pct: 0.9
 cutmix: 1.0
 cutmix_minmax: null
-data: "/data/zhicai/ImageNet2012"
+data: /data/zhicai/ImageNet2012 # set your ImageNet dir
 dataset: ""
 decay_epochs: 1.0
 decay_rate: 0.988
@@ -79,7 +79,7 @@ num_classes: 1000
 opt: adamw
 opt_betas: null
 opt_eps: 1.0e-05
-output: '/data/zhicai/ckpts/Mgmlp'
+output: '/data/zhicai/ckpts/Mgmlp' # set your output dir
 patience_epochs: 10
 pin_mem: false
 pretrained: ""

@@ -41,6 +41,7 @@ transform = transforms.Compose([transforms.Resize((224,224)),
 # path = '/data/zhicai/ckpts/Mgmlp/train/20211021-090705-nest_gmlp_s_b4-224/checkpoint-117.pth.tar'
 # pretrained="/data/zhicai/ckpts/Mgmlp/checkpoint-37.pth_nopoolnorm_81.3.tar"
 model = models.PosMLP_T14_224()
+print(list(model.children()))
 # model.load_state_dict(torch.load(path)['state_dict_ema'])
 img = torch.randn([1,3,224,224])
 # model = models.mixer_s16_224()

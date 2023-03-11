@@ -1,6 +1,6 @@
 # Parameterization of Cross-Token Relations with Relative Positional Encoding for Vision MLP
 
-This is a Pytorch implementation of our paper. We have presented a new gating unit PoSGU 
+This is a Pytorch implementation of our ACM2022 paper. We have presented a new gating unit PoSGU 
 which  replace the FC layer in SGU of [gMLP](https://proceedings.neurips.cc/paper/2021/hash/4cc05b35c2f937c5bd9e7d41d3686fff-Abstract.html) with relative positional encoding methods (Spercifically, LRPE and GQPE) and used it
 as the key building block to develop a new vision MLP architecture
 referred to as the PosMLP. We also hope this work will inspire further theoretical study of positional encoding
@@ -17,7 +17,7 @@ Our code is based on the [pytorch-image-models](https://github.com/rwightman/pyt
 | gMLP-S       | 20M        | 224              | 79.6%      |          |
 | Hire-MLP-S   | 33M        | 224              | 81.8%      |          |
 | ViP-Small/7  | 25M        | 224              | 81.5%      |          |
-| **PosMLP-T** | 21M        | 224              | 82.1%      |released soon|
+| **PosMLP-T** | 21M        | 224              | 82.1%      |[百度云盘](https://pan.baidu.com/s/1x611r3q1mWO3kv1F0OGhqg?pwd=8781)/[GoogleDrive](https://drive.google.com/file/d/1wl0JzFqmdbhRAp2WEgl0dVFW5jnoS6bM/view?usp=share_link)|
 | S2-MLP-deep  | 51M        | 224              | 80.7%      |          |
 | Mixer-B/16   | 59M        | 224              | 78.5%      |          |
 | ViP-Medium/7 | 55M        | 224              | 82.7%      |          |
@@ -67,9 +67,15 @@ CUDA_VISIBLE_DEVICES=0 bash eval.sh /path/to/imagenet/val /path/to/checkpoint
 
 ### Training
 
-Command line for training PosMLP-T on 8 GPUs (RTX 3090)
+Command line for training PosMLP-T on 4 GPUs (RTX 3090)
 ```
-bash distributed_train.sh
+bash scripts/distributed_train.sh
+```
+### validation
+
+Please download the checkpoint from above here and specify the data and model paths in the script, and test with command
+```
+CUDA_VISIBLE_DEVICES=0 bash scripts/test.sh
 ```
 
 
